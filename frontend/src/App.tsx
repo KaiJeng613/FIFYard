@@ -1,86 +1,48 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, Grid2X2, List, Search, SlidersHorizontal, UsersRound } from 'lucide-react'
-import { PlayerCard } from './components/PlayerCard'
-import { PlayerEditor } from './components/PlayerEditor'
-import { PredictionPanel } from './components/PredictionPanel'
 import { Sidebar } from './components/Sidebar'
 import { WalletButton } from './components/WalletButton'
-import { calculateOverall, formations, isValidLineup, opponents, predictMatch, type Formation } from './lib/prediction'
-import { publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
-import { players as officialPlayers, type Player, type PlayerStats, type Position } from './players'
+import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
+import { players, type Player, type Position } from './players'
 
-const positions: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
-const defaultSelection = [13, 8, 9, 10, 11, 4, 5, 6, 0, 1, 2]
+const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
-export function App() {
-  const [workingPlayers, setWorkingPlayers] = useState(officialPlayers)
-  const [selectedIds, setSelectedIds] = useState<number[]>(defaultSelection)
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [wallet, setWallet] = useState<string | null>(null)
+function App() {
   const [formation, setFormation] = useState<Formation>('4-3-3')
-  const [teamCountry, setTeamCountry] = useState('MAS')
+  const [filter, setFilter] = useState<(typeof filters)[number]>('ALL')
+  const [selected, setSelected] = useState<number[]>([13, 8, 9, 10, 11, 4, 5, 6, 0, 1, 2])
+  const [focused, setFocused] = useState<Player>(players[0])
+  const [wallet, setWallet] = useState<string | null>(null)
   const [opponentCode, setOpponentCode] = useState('ARG')
-  const [position, setPosition] = useState<(typeof positions)[number]>('ALL')
-  const [query, setQuery] = useState('')
-  const [compact, setCompact] = useState(false)
-  const [publishing, setPublishing] = useState(false)
-  const [publishError, setPublishError] = useState('')
-  const [transactionUrl, setTransactionUrl] = useState<string | null>(null)
 
   const selectedPlayers = useMemo(
-    () => selectedIds.map((id) => workingPlayers.find((player) => player.id === id)).filter((player): player is Player => Boolean(player)),
-    [selectedIds, workingPlayers],
+    () => selected.map((id) => players.find((player) => player.id === id)).filter((player): player is Player => Boolean(player)),
+    [selected],
   )
-  const filteredPlayers = useMemo(() => workingPlayers.filter((player) => {
-    const matchesPosition = position === 'ALL' || player.position === position
-    const matchesQuery = `${player.name} ${player.club} ${player.country}`.toLowerCase().includes(query.toLowerCase())
-    return matchesPosition && matchesQuery
-  }), [position, query, workingPlayers])
-  const editingPlayer = editingId === null ? null : workingPlayers.find((player) => player.id === editingId) ?? null
+
   const opponent = opponents.find((item) => item.code === opponentCode) ?? opponents[0]
   const lineupValid = isValidLineup(selectedPlayers, formation)
   const prediction = predictMatch(selectedPlayers, opponent.rating, lineupValid)
 
+  const average = selectedPlayers.length
+    ? Math.round(selectedPlayers.reduce((sum, player) => sum + player.overall, 0) / selectedPlayers.length)
+    : 0
+  const filteredPlayers = filter === 'ALL' ? players : players.filter((player) => player.position === filter)
+  const positionCounts = selectedPlayers.reduce<Record<Position, number>>(
+    (counts, player) => ({ ...counts, [player.position]: counts[player.position] + 1 }),
+    { GK: 0, DEF: 0, MID: 0, FWD: 0 },
+  )
+  const expected = formationCounts[formation]
+  const fullLineupValid = selected.length === 11 && filters.slice(1).every(
+    (position) => positionCounts[position as Position] === expected[position as Position],
+  )
+
   function togglePlayer(player: Player) {
-    setSelectedIds((current) => {
+    setFocused(player)
+    setSelected((current) => {
       if (current.includes(player.id)) return current.filter((id) => id !== player.id)
-      return current.length < 11 ? [...current, player.id] : current
+      if (current.length >= 11) return current
+      return [...current, player.id]
     })
-    setTransactionUrl(null)
-  }
-
-  function updatePlayerStats(playerId: number, stats: PlayerStats) {
-    setWorkingPlayers((current) => current.map((player) => player.id === playerId
-      ? { ...player, stats, overall: calculateOverall(player.position, stats) }
-      : player))
-    setTransactionUrl(null)
-  }
-
-  function resetPlayer(playerId: number) {
-    const official = officialPlayers.find((player) => player.id === playerId)
-    if (!official) return
-    setWorkingPlayers((current) => current.map((player) => player.id === playerId ? official : player))
-  }
-
-  async function publishFormation() {
-    if (!wallet || !lineupValid) return
-    setPublishing(true)
-    setPublishError('')
-    setTransactionUrl(null)
-    try {
-      const signature = await publishTeamSnapshot(wallet, {
-        country: teamCountry,
-        formation,
-        playerIds: selectedIds,
-        opponent: opponent.code,
-        winRate: prediction.win,
-      })
-      setTransactionUrl(solscanTransactionUrl(signature))
-    } catch (error) {
-      setPublishError(error instanceof Error ? error.message : 'The devnet transaction failed.')
-    } finally {
-      setPublishing(false)
-    }
   }
 
   return (
@@ -92,57 +54,126 @@ export function App() {
           <WalletButton wallet={wallet} onConnected={setWallet} />
         </header>
 
-        <main>
-          <section className="vault" id="vault">
-            <div className="page-heading">
-              <div><span>COLLECT · CUSTOMIZE · COMPETE</span><h1>Player Vault</h1><p>Collect unique player cards, model your own lineups, and publish predictions on Solana.</p></div>
-              <div className="vault-value"><span>COLLECTION VALUE</span><strong>31.7 <small>SOL</small></strong><em>+6.4% this month</em></div>
+        <main id="top">
+          <section className="workspace" id="squad">
+            <div className="section-heading">
+              <div>
+                <span>01 / SQUAD BUILDER</span>
+                <h2>Assemble your starting XI</h2>
+              </div>
+              <div className="selection-count">
+                <strong>{selected.length}</strong>
+                <span>/ 11 SELECTED</span>
+              </div>
             </div>
 
-            <div className="vault-metrics">
-              <article><span>OWNED PLAYERS</span><strong>15</strong><small>11 in starting XI</small></article>
-              <article><span>AVG. RATING</span><strong>{prediction.squadRating}</strong><small>Active formation</small></article>
-              <article><span>PREDICTED WIN</span><strong>{prediction.win}%</strong><small>vs. {opponent.country}</small></article>
-              <article><span>TEAM COUNTRY</span><strong>{teamCountry}</strong><small>On-chain identity</small></article>
-            </div>
-
-            <div className="collection-toolbar">
-              <div className="period-tabs"><button className="active">7D</button><button>1M</button><button>ALL</button></div>
-              <label className="search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search players" /></label>
-              <div className="position-filter">{positions.map((item) => <button className={position === item ? 'active' : ''} onClick={() => setPosition(item)} key={item}>{item}</button>)}</div>
-              <button className="sort-button">Rating: high <ChevronDown size={15} /></button>
-              <button className="filter-button"><SlidersHorizontal size={16} /> Filters</button>
-              <div className="view-toggle"><button className={!compact ? 'active' : ''} onClick={() => setCompact(false)} aria-label="Card view"><Grid2X2 size={17} /></button><button className={compact ? 'active' : ''} onClick={() => setCompact(true)} aria-label="Compact view"><List size={18} /></button></div>
-            </div>
-
-            <div className={`collection-grid ${compact ? 'compact' : ''}`}>
-              {filteredPlayers.map((player) => <PlayerCard player={player} selected={selectedIds.includes(player.id)} onEdit={(item) => setEditingId(item.id)} onToggle={togglePlayer} key={player.id} />)}
-            </div>
-          </section>
-
-          <section className="team-studio" id="studio">
-            <div className="studio-heading"><div><span>TEAM STUDIO</span><h2>Build a country squad</h2><p>Choose exactly eleven collectible players that match your formation.</p></div><div className={`lineup-status ${lineupValid ? 'valid' : ''}`}><UsersRound size={18} /><strong>{selectedPlayers.length}/11</strong><span>{lineupValid ? 'LINEUP VALID' : 'ADJUST POSITIONS'}</span></div></div>
-            <div className="studio-grid">
-              <section className="team-config">
-                <div className="config-row"><label>Representing<select value={teamCountry} onChange={(event) => { setTeamCountry(event.target.value); setTransactionUrl(null) }}>{opponents.map((item) => <option value={item.code} key={item.code}>{item.country} ({item.code})</option>)}</select></label><label>Formation<select value={formation} onChange={(event) => { setFormation(event.target.value as Formation); setTransactionUrl(null) }}>{formations.map((item) => <option value={item} key={item}>{item}</option>)}</select></label><label>Opponent<select value={opponentCode} onChange={(event) => { setOpponentCode(event.target.value); setTransactionUrl(null) }}>{opponents.filter((item) => item.code !== teamCountry).map((item) => <option value={item.code} key={item.code}>{item.country} · {item.rating}</option>)}</select></label></div>
-                <div className="selected-lineup">
-                  {selectedPlayers.map((player) => <button onClick={() => setEditingId(player.id)} key={player.id}><span style={{ background: player.accent }}>{player.shortName.slice(0, 2)}</span><strong>{player.shortName}</strong><small>{player.position}</small><b>{player.overall}</b></button>)}
-                  {Array.from({ length: Math.max(0, 11 - selectedPlayers.length) }, (_, index) => <div className="empty-slot" key={`empty-${index}`}>+</div>)}
+            <div className="builder-grid">
+              <aside className="player-panel">
+                <div className="filters">
+                  {filters.map((item) => (
+                    <button className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)} key={item}>
+                      {item}
+                    </button>
+                  ))}
                 </div>
-                <div className="integrity-note"><b>Stats integrity:</b> Official ratings are oracle-controlled. Your custom training profiles affect simulations and are included in the signed team snapshot without changing the collectible's canonical record.</div>
-              </section>
-              <PredictionPanel {...prediction} lineupValid={lineupValid} walletConnected={Boolean(wallet)} publishing={publishing} transactionUrl={transactionUrl} onPublish={publishFormation} />
+                <div className="player-list">
+                  {filteredPlayers.map((player) => (
+                    <button
+                      className={`player-row ${selected.includes(player.id) ? 'picked' : ''}`}
+                      onClick={() => togglePlayer(player)}
+                      key={player.id}
+                    >
+                      <span className="rating">{player.overall}</span>
+                      <span className="player-identity">
+                        <strong>{player.name}</strong>
+                        <small>{player.club} · {player.country}</small>
+                      </span>
+                      <span className={`position ${player.position.toLowerCase()}`}>{player.position}</span>
+                      <span className="pick-icon">{selected.includes(player.id) ? '✓' : '+'}</span>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="pitch-panel">
+                <div className="formation-toolbar">
+                  <span>FORMATION</span>
+                  <div>
+                    {formations.map((item) => (
+                      <button className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)} key={item}>
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="pitch">
+                  <div className="center-circle" />
+                  <div className="penalty top" />
+                  <div className="penalty bottom" />
+                  <div className="lineup">
+                    {selectedPlayers.map((player, index) => (
+                      <button className={`mini-card slot-${index}`} onClick={() => setFocused(player)} key={player.id}>
+                        <span>{player.overall}</span>
+                        <strong>{player.shortName}</strong>
+                        <small>{player.position}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="squad-summary">
+                  <div><span>SQUAD RATING</span><strong>{average}</strong></div>
+                  <div><span>FORMATION</span><strong>{formation}</strong></div>
+                  <div><span>WIN RATE</span><strong>{lineupValid ? `${prediction.win}%` : '—'}</strong></div>
+                  <div className="opponent-select">
+                    <span>VS OPPONENT</span>
+                    <select value={opponentCode} onChange={(e) => setOpponentCode(e.target.value)}>
+                      {opponents.map((item) => (
+                        <option value={item.code} key={item.code}>{item.country} ({item.rating})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button disabled={!wallet || !fullLineupValid}>
+                    {wallet ? (fullLineupValid ? 'Submit XI' : 'Complete a valid XI') : 'Connect wallet to continue'}
+                  </button>
+                </div>
+              </div>
+
+              <aside className="stat-panel">
+                <div className="card-kicker">PLAYER INTELLIGENCE</div>
+                <div className="featured-rating"><strong>{focused.overall}</strong><span>OVR</span></div>
+                <h3>{focused.name}</h3>
+                <p>{focused.position} · {focused.club} · {focused.country}</p>
+                <div className="stat-bars">
+                  {Object.entries(focused.stats).map(([label, value]) => (
+                    <div className="stat" key={label}>
+                      <span>{label}</span>
+                      <div><i style={{ width: `${value}%` }} /></div>
+                      <strong>{value}</strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="oracle-stamp">
+                  <i>✓</i>
+                  <span><strong>VERIFIED ON-CHAIN</strong>Stats oracle · Epoch 491</span>
+                </div>
+                <code>PLAYER PDA · 7xK2…mP9q</code>
+              </aside>
             </div>
-            {publishError && <p className="publish-error" role="alert">{publishError}</p>}
           </section>
 
-          <section className="wallet-purpose" id="contract">
-            <div><span>WHY PHANTOM?</span><h2>Your wallet is your FIFYard account.</h2></div>
-            <div className="purpose-grid"><article><b>01</b><h3>Prove ownership</h3><p>Read which player NFTs belong to you and determine who can enter your starting XI.</p></article><article><b>02</b><h3>Approve actions</h3><p>Sign team publications, player purchases, transfers, and future prediction entries. FIFYard cannot sign for you.</p></article><article><b>03</b><h3>Verify everything</h3><p>Every successful write returns a Solscan devnet link for the transaction, accounts, and program interaction.</p></article></div>
+          <section className="protocol" id="protocol">
+            <span>02 / THE PROTOCOL</span>
+            <h2>Football data you can verify.</h2>
+            <div className="protocol-grid">
+              <article><b>01</b><h3>Collect</h3><p>Each player card is a unique Solana NFT tied to a canonical player account.</p></article>
+              <article><b>02</b><h3>Verify</h3><p>Versioned ratings are signed by the FIFYard statistics authority and timestamped on-chain.</p></article>
+              <article><b>03</b><h3>Compete</h3><p>Your eleven-player formation becomes a composable squad PDA for games and prediction leagues.</p></article>
+            </div>
           </section>
         </main>
       </div>
-      {editingPlayer && <PlayerEditor player={editingPlayer} onChange={(stats) => updatePlayerStats(editingPlayer.id, stats)} onClose={() => setEditingId(null)} onReset={() => resetPlayer(editingPlayer.id)} />}
     </div>
   )
 }
+
+export default App

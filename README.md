@@ -8,6 +8,16 @@ The repository contains:
 - A responsive React/Vite squad-building UI in `frontend`
 - Devnet configuration in `Anchor.toml`
 
+## Product experience
+
+The frontend follows a collectible-vault model inspired by physical-card marketplaces:
+
+- **Player Vault:** browse unique player cards with live ratings, position filters, collection value, floor-price placeholders, and card/list layouts.
+- **Simulation profiles:** customize pace/running, kicking/shooting, passing, ball control, defending, and stamina. These are user-owned simulation values; they never overwrite official oracle statistics.
+- **Country Team Studio:** choose a country, formation, opponent, and exactly eleven owned players.
+- **Prediction model:** shows win/draw/loss probabilities from squad rating, opponent strength, and formation validity. The current model is an explainable heuristic, not a trained model or betting product.
+- **Devnet publishing:** signs a compact team snapshot with Phantom, publishes it through Solana's Memo program, and returns a Solscan devnet transaction link.
+
 ## What is implemented
 
 ### Player accounts
@@ -27,6 +37,27 @@ Only the configured statistics authority can create players or update ratings. E
 The NFT represents ownership; the Player PDA represents canonical, mutable sports data. `create_squad` requires 11 unique Player PDAs plus 11 matching classic SPL Token accounts. It verifies that the signer holds each player's token, checks minimum positional rules, and calculates the squad rating from player accounts rather than trusting the client.
 
 Supported MVP formations are `4-3-3`, `4-4-2`, `3-5-2`, and `4-2-3-1`. The program enforces the exact goalkeeper/defender/midfielder/forward count encoded by the selected formation.
+
+The Squad account also records a three-letter country code, opponent rating, and deterministic predicted win rate in basis points. This lets other Solana applications inspect the inputs and reproduce the contract result.
+
+## Phantom wallet and Solscan
+
+Phantom is intentionally the default and only wallet provider used by the current UI. Connecting Phantom does not transfer funds or give FIFYard custody. It exposes the wallet's public address and lets the owner approve specific transactions.
+
+The wallet enables:
+
+1. Proving which player NFTs the user owns.
+2. Signing team-formation publications and paying the small devnet transaction fee.
+3. Future player purchases, sales, transfers, prediction entries, and reward claims.
+4. Associating on-chain squads with the user's public address.
+
+Every successful team publication links to:
+
+```text
+https://solscan.io/tx/<SIGNATURE>?cluster=devnet
+```
+
+The header also links to the configured FIFYard program account on Solscan. Until the Anchor program is deployed and seeded, the live publish button uses the standard Memo program. Once deployment is complete, replace that call with the generated Anchor `create_squad` client instruction; Solscan will then display FIFYard as the interacting program.
 
 ## Why stats should not live only in NFT metadata
 
@@ -53,7 +84,7 @@ npm install
 npm run dev
 ```
 
-The current UI uses demo player data because no Player PDAs exist until the program is deployed and seeded. Wallet connection is live; squad submission stays disabled until a deployed program ID, generated IDL, NFT mints, and token accounts are available.
+The current UI uses demo player data because no Player PDAs exist until the program is deployed and seeded. Phantom connection and Memo-based devnet publishing are live. Direct `create_squad` submission still requires a deployed program ID, generated IDL, NFT mints, and token accounts.
 
 Production build:
 
