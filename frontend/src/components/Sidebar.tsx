@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { BarChart3, CircleUserRound, Shield, UsersRound } from 'lucide-react'
+import { BarChart3, Shield, UsersRound } from 'lucide-react'
 
 type Page = 'squad' | 'predictions'
 
@@ -34,7 +34,6 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
       </nav>
       <div className="sidebar-bottom">
         <a href="#"><Shield size={20} /><span>Protocol</span></a>
-        <a href="#"><CircleUserRound size={20} /><span>Profile</span></a>
         <div className="network-pill"><i /> SOLANA DEVNET</div>
       </div>
     </aside>

@@ -1,9 +1,22 @@
 import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
-// Use a public RPC with better rate limits, or allow custom endpoint via env
-const RPC_ENDPOINT = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl('devnet')
-export const connection = new Connection(RPC_ENDPOINT, 'confirmed')
+// RPC endpoints - try multiple for reliability
+const RPC_ENDPOINTS = [
+  'https://api.devnet.solana.com',
+  'https://rpc.devnet.sonic.game',
+  'https://solana-devnet.g.alchemy.com/v2/demo',
+  clusterApiUrl('devnet'),
+]
+
+// Create connection with fallback
+let connection = new Connection(RPC_ENDPOINTS[0], 'confirmed')
+let currentRpcIndex = 0
+
+export function getConnection(): Connection {
+  return connection
+}
+
 export const programId = new PublicKey('6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKnfujB')
 const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 
@@ -47,7 +60,12 @@ export async function fetchEpoch(): Promise<number | null> {
   try {
     const info = await connection.getEpochInfo()
     return info.epoch
-  } catch {
+  } catch (err) {
+    if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
+      currentRpcIndex++
+      connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
+      return fetchEpoch()
+    }
     return null
   }
 }
@@ -57,7 +75,12 @@ export async function fetchBalance(address: string): Promise<number> {
   try {
     const lamports = await connection.getBalance(new PublicKey(address))
     return lamports
-  } catch {
+  } catch (err) {
+    if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
+      currentRpcIndex++
+      connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
+      return fetchBalance(address)
+    }
     return 0
   }
 }
@@ -75,7 +98,11 @@ async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): P
       return await fn()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('429') && i < maxRetries - 1) {
+      if (msg.includes('429') || msg.includes('rate limit')) {
+        if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
+          currentRpcIndex++
+          connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
+        }
         await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)))
         continue
       }
@@ -107,13 +134,15 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
 
       if (!isLegacy) continue // Skip versioned transactions for simplicity
 
+      // Legacy transaction structure
       const accountKeys = (msg as { accountKeys: PublicKey[] }).accountKeys
       const compiledIx = (msg as { instructions: { programIdIndex: number; data: string }[] }).instructions
 
+      // Find Memo instruction (skip ComputeBudget/SetComputeUnitPrice - they come first)
       const memoIx = compiledIx.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
       if (!memoIx?.data) continue
 
-      // Decode base64 memo data - it's a string in CompiledInstruction
+      // Decode base64 memo data
       const decoded = Buffer.from(memoIx.data, 'base64').toString('utf8')
       const json = JSON.parse(decoded)
 
