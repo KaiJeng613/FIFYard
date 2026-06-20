@@ -38,4 +38,3 @@ export function WalletButton({ wallet, onConnected }: WalletButtonProps) {
     </div>
   )
 }
-

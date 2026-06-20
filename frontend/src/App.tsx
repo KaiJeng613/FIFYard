@@ -6,7 +6,7 @@ import { players, type Player, type Position } from './players'
 
 const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
-function App() {
+export function App() {
   const [formation, setFormation] = useState<Formation>('4-3-3')
   const [filter, setFilter] = useState<(typeof filters)[number]>('ALL')
   const [selected, setSelected] = useState<number[]>([13, 8, 9, 10, 11, 4, 5, 6, 0, 1, 2])
@@ -175,5 +175,3 @@ function App() {
     </div>
   )
 }
-
-export default App
