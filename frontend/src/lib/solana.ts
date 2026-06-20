@@ -274,24 +274,51 @@ export function invalidateTeamsCache(walletAddress: string) {
   teamsCache.delete(walletAddress)
 }
 
-// ── Blockhash helper ──────────────────────────────────────────────────────────
+// ── Blockhash — use Phantom's own RPC first, fall back to public endpoints ────
+//
+// Phantom routes all its wallet-method calls through its own private RPC node.
+// That node is NOT subject to the same 429 rate limits our public endpoint
+// calls generate. By calling getLatestBlockhash via provider.request() we
+// completely bypass the congestion we caused on api.devnet.solana.com.
 
-async function getBlockhash() {
+async function getBlockhashViaPhantom(provider: ReturnType<typeof assertPhantom>): Promise<{ blockhash: string; lastValidBlockHeight: number } | null> {
+  try {
+    const resp = await Promise.race([
+      provider.request({ method: 'getLatestBlockhash', params: [{ commitment: 'confirmed' }] }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+    ]) as { value?: { blockhash: string; lastValidBlockHeight: number } } | null
+    const val = resp?.value
+    if (val?.blockhash && typeof val.lastValidBlockHeight === 'number') {
+      console.log('Blockhash via Phantom RPC:', val.blockhash.slice(0, 8) + '…')
+      return val
+    }
+  } catch (e) {
+    console.warn('Phantom blockhash failed:', e)
+  }
+  return null
+}
+
+async function getBlockhash(provider?: ReturnType<typeof assertPhantom>) {
+  // 1. Try Phantom's own RPC (no rate-limit risk)
+  if (provider) {
+    const result = await getBlockhashViaPhantom(provider)
+    if (result) return result
+  }
+
+  // 2. Fall back to public endpoints via our rpc() helper
+  console.warn('Falling back to public RPC for blockhash…')
   return rpc(() => connection.getLatestBlockhash('confirmed'), 8000, 'getLatestBlockhash')
 }
 
-// ── Sign + send (no aggressive polling) ──────────────────────────────────────
+// ── Sign + send ───────────────────────────────────────────────────────────────
 
 async function signAndSend(
   provider: ReturnType<typeof assertPhantom>,
   transaction: Transaction,
 ): Promise<string> {
-  // skipPreflight avoids an extra simulation RPC call that can 429
   const result = await provider.signAndSendTransaction(transaction)
   const signature = typeof result === 'string' ? result : result.signature
   console.log('Tx sent:', signature)
-  // Don't poll confirmTransaction — just return the signature immediately.
-  // The tx will confirm in ~400–800ms on devnet. Callers can link to Solscan.
   return signature
 }
 
@@ -307,14 +334,14 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
     data: Buffer.from(JSON.stringify({ app: 'FIFYard', v: 1, ...snapshot }), 'utf8'),
   }))
 
-  const { blockhash, lastValidBlockHeight } = await getBlockhash()
+  const { blockhash, lastValidBlockHeight } = await getBlockhash(provider)
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
-  void lastValidBlockHeight // used implicitly by the network
+  void lastValidBlockHeight
 
   console.log('Publishing team via Memo, fee payer:', owner.toBase58())
   const signature = await signAndSend(provider, transaction)
-  invalidateTeamsCache(ownerAddress) // so next fetch sees the new team
+  invalidateTeamsCache(ownerAddress)
   return signature
 }
 
@@ -330,12 +357,12 @@ export async function publishShortlist(ownerAddress: string, playerIds: number[]
     data: Buffer.from(JSON.stringify({ app: 'FIFYard', v: 1, type: 'shortlist', playerIds }), 'utf8'),
   }))
 
-  const { blockhash, lastValidBlockHeight } = await getBlockhash()
+  const { blockhash, lastValidBlockHeight } = await getBlockhash(provider)
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
   void lastValidBlockHeight
 
-  shortlistCache.set(ownerAddress, playerIds) // optimistic cache update
+  shortlistCache.set(ownerAddress, playerIds)
   return signAndSend(provider, transaction)
 }
 
@@ -402,7 +429,7 @@ export async function purchasePlayer(
       ),
     }))
 
-  const { blockhash, lastValidBlockHeight } = await getBlockhash()
+  const { blockhash, lastValidBlockHeight } = await getBlockhash(provider)
   transaction.feePayer = buyer
   transaction.recentBlockhash = blockhash
   void lastValidBlockHeight
