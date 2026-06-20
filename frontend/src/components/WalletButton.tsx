@@ -52,15 +52,22 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       setError('Phantom not found — install page opened.')
       return
     }
+
+    // If already connected, don't try to connect again
+    if (provider.publicKey) {
+      onConnected(provider.publicKey.toString())
+      return
+    }
+
     try {
-      if (provider.publicKey) {
-        await provider.disconnect()
-        delete window.phantom?.solana
-      }
       const result = await provider.connect({ onlyTrusted: false })
       onConnected(result.publicKey.toString())
-    } catch {
-      setError('Connection cancelled.')
+    } catch (err: unknown) {
+      // Don't show error on immediate window close without rejection
+      const msg = err instanceof Error ? err.message : ''
+      if (msg && !msg.includes('rejected')) {
+        setError(msg)
+      }
     }
   }
 
