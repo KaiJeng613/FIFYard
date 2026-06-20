@@ -1,4 +1,4 @@
-import { ExternalLink, ShieldAlert, BarChart3 } from 'lucide-react'
+import { ExternalLink, ShieldAlert, Shield, Swords } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { opponents, predictMatch, type Formation } from '../lib/prediction'
 import { players, type Player } from '../players'
@@ -21,16 +21,6 @@ interface PredictionsPageProps {
 
 type Opponent = { readonly country: string; readonly code: string; readonly rating: number }
 
-function getFormationStyle(formation: Formation): string {
-  const styles: Record<Formation, string> = {
-    '4-3-3': 'Attack-minded with emphasis on forwards',
-    '4-4-2': 'Balanced formation with strong midfield presence',
-    '3-5-2': 'Midfield-heavy control setup',
-    '4-2-3-1': 'Modern flexible system with lone striker',
-  }
-  return styles[formation]
-}
-
 function buildExplanation(team: PublishedTeam, opp: Opponent, winPct: number): string {
   const teamPlayers = team.playerIds
     .map((id) => players.find((p) => p.id === id))
@@ -46,143 +36,166 @@ function buildExplanation(team: PublishedTeam, opp: Opponent, winPct: number): s
   const ratingDiff = avgRating - opp.rating
   const parts: string[] = []
 
-  if (ratingDiff >= 5) parts.push(`squad rating (${avgRating}) significantly exceeds opponent (${opp.rating})`)
-  else if (ratingDiff >= 0) parts.push(`squad rating (${avgRating}) is slightly above opponent (${opp.rating})`)
-  else parts.push(`opponent (${opp.rating}) outrates squad (${avgRating})`)
+  if (ratingDiff >= 5) parts.push(`Squad OVR ${avgRating} significantly exceeds opponent's ${opp.rating}`)
+  else if (ratingDiff >= 0) parts.push(`Squad OVR ${avgRating} edges opponent's ${opp.rating}`)
+  else parts.push(`Opponent OVR ${opp.rating} outrates squad's ${avgRating}`)
 
-  if (fwds >= 3) parts.push(`${fwds} forwards create high attacking threat`)
+  if (fwds >= 3) parts.push(`${fwds} forwards generate high attacking threat`)
   else if (fwds === 1) parts.push(`lone striker limits offensive output`)
 
-  if (mids >= 5) parts.push(`${mids} midfielders dominate possession and transition`)
-  else if (mids >= 4) parts.push(`strong midfield of ${mids} provides balance`)
+  if (mids >= 5) parts.push(`${mids}-man midfield dominates possession`)
+  else if (mids >= 4) parts.push(`${mids} midfielders provide solid balance`)
 
-  if (defs >= 4) parts.push(`${defs}-man backline offers defensive solidity`)
+  if (defs >= 4) parts.push(`${defs}-man backline is defensively solid`)
   else if (defs === 3) parts.push(`3-man defence trades solidity for width`)
 
   if (winPct >= 50) parts.push(`overall outlook is favourable`)
   else if (winPct >= 35) parts.push(`match is evenly contested`)
   else parts.push(`opponent strength makes this a tough fixture`)
 
-  return parts.join('; ') + '.'
+  return parts.join('. ') + '.'
 }
 
-function analyzeTeam(team: PublishedTeam): { fwdFocus: number; midControl: number; defSolid: number } {
-  const teamPlayers = team.playerIds.map((id) => players.find((p) => p.id === id)).filter((p): p is Player => Boolean(p))
-  const avg = teamPlayers.length ? teamPlayers.reduce((s, p) => s + p.overall, 0) / teamPlayers.length : 0
-  const fwdAvg = teamPlayers.filter(p => p.position === 'FWD').reduce((s, p) => s + p.overall, 0) / Math.max(1, teamPlayers.filter(p => p.position === 'FWD').length)
-  const midAvg = teamPlayers.filter(p => p.position === 'MID').reduce((s, p) => s + p.overall, 0) / Math.max(1, teamPlayers.filter(p => p.position === 'MID').length)
-  const defAvg = teamPlayers.filter(p => p.position === 'DEF').reduce((s, p) => s + p.overall, 0) / Math.max(1, teamPlayers.filter(p => p.position === 'DEF').length)
-  return {
-    fwdFocus: fwdAvg > avg ? Math.round(((fwdAvg - avg) / avg) * 100) : 0,
-    midControl: midAvg > avg ? Math.round(((midAvg - avg) / avg) * 100) : 0,
-    defSolid: defAvg > avg ? Math.round(((defAvg - avg) / avg) * 100) : 0,
-  }
+function MatchupCard({ team, opp, teamPlayers }: {
+  team: PublishedTeam
+  opp: Opponent
+  teamPlayers: Player[]
+}) {
+  const result = predictMatch(teamPlayers, opp.rating, true)
+  const explanation = buildExplanation(team, opp, result.win)
+  const verdict = result.win >= 50 ? 'win' : result.win >= 35 ? 'draw' : 'loss'
+  const verdictLabel = result.win >= 50 ? 'Favoured' : result.win >= 35 ? 'Evenly Matched' : 'Underdog'
+
+  return (
+    <div className={`mc-card mc-${verdict}`}>
+      {/* vs header */}
+      <div className="mc-header">
+        <div className="mc-side mc-your-side">
+          <Shield size={13} />
+          <span className="mc-side-label">YOUR TEAM</span>
+          <span className="mc-side-name">{team.name}</span>
+          <span className="mc-side-rating">OVR {team.squadRating}</span>
+        </div>
+
+        <div className="mc-center">
+          <div className="mc-win-big">{result.win}%</div>
+          <div className="mc-win-label">WIN CHANCE</div>
+          <div className={`mc-verdict-badge mc-verdict-${verdict}`}>{verdictLabel}</div>
+        </div>
+
+        <div className="mc-side mc-opp-side">
+          <Swords size={13} />
+          <span className="mc-side-label">OPPONENT</span>
+          <span className="mc-side-name">{opp.country}</span>
+          <span className="mc-side-rating">OVR {opp.rating}</span>
+        </div>
+      </div>
+
+      {/* probability bars */}
+      <div className="mc-bars">
+        <div className="mc-bar-row">
+          <span className="mc-bar-label">Win</span>
+          <div className="mc-bar-track">
+            <div className="mc-bar-fill mc-bar-win" style={{ width: `${result.win}%` }} />
+          </div>
+          <span className="mc-bar-pct">{result.win}%</span>
+        </div>
+        <div className="mc-bar-row">
+          <span className="mc-bar-label">Draw</span>
+          <div className="mc-bar-track">
+            <div className="mc-bar-fill mc-bar-draw" style={{ width: `${result.draw}%` }} />
+          </div>
+          <span className="mc-bar-pct">{result.draw}%</span>
+        </div>
+        <div className="mc-bar-row">
+          <span className="mc-bar-label">Loss</span>
+          <div className="mc-bar-track">
+            <div className="mc-bar-fill mc-bar-loss" style={{ width: `${result.loss}%` }} />
+          </div>
+          <span className="mc-bar-pct">{result.loss}%</span>
+        </div>
+      </div>
+
+      {/* explanation */}
+      <p className="mc-explanation">{explanation}</p>
+    </div>
+  )
 }
 
-function TeamPredictions({ team, opponentsToShow }: { team: PublishedTeam; opponentsToShow: readonly Opponent[] }) {
+function TeamCard({ team, opponentsToShow }: { team: PublishedTeam; opponentsToShow: readonly Opponent[] }) {
   const teamPlayers = team.playerIds
     .map((id) => players.find((p) => p.id === id))
     .filter((p): p is Player => Boolean(p))
 
-  const analysis = analyzeTeam(team)
+  const byPos: Record<string, Player[]> = { GK: [], DEF: [], MID: [], FWD: [] }
+  teamPlayers.forEach(p => byPos[p.position]?.push(p))
 
   return (
-    <article className="pred-team-card">
-      <div className="pred-team-header">
-        <div>
-          <span className="pred-team-label">PUBLISHED TEAM</span>
-          <h3>{team.name}</h3>
-          <p className="pred-team-meta">
-            {team.formation} · {teamPlayers.length} players · Rating {team.squadRating}
-            {' · '}{new Date(team.publishedAt).toLocaleDateString()}
-          </p>
+    <div className="tc-wrapper">
+      {/* team identity bar */}
+      <div className="tc-identity">
+        <div className="tc-identity-left">
+          <span className="tc-label">PUBLISHED TEAM</span>
+          <h3 className="tc-name">{team.name}</h3>
+          <p className="tc-meta">{team.formation} · Rating {team.squadRating} · {new Date(team.publishedAt).toLocaleDateString()}</p>
         </div>
         {team.txUrl && (
-          <a className="pred-tx-link" href={team.txUrl} target="_blank" rel="noreferrer">
-            Solscan <ExternalLink size={12} />
+          <a className="tc-tx-link" href={team.txUrl} target="_blank" rel="noreferrer">
+            Solscan <ExternalLink size={11} />
           </a>
         )}
       </div>
 
-      <div className="pred-analysis">
-        <span className="pred-analysis-label">Team Style:</span>
-        <span className="pred-analysis-text">{getFormationStyle(team.formation)}</span>
-        {analysis.fwdFocus > 10 && <span className="pred-style-tag attack">Attacking Forwards (+{analysis.fwdFocus}%)</span>}
-        {analysis.midControl > 10 && <span className="pred-style-tag control">Strong Midfield (+{analysis.midControl}%)</span>}
-        {analysis.defSolid > 10 && <span className="pred-style-tag defense">Solid Defense (+{analysis.defSolid}%)</span>}
-      </div>
-
-      <div className="pred-players">
-        <span className="pred-players-label">Squad:</span>
-        <div className="pred-player-list">
-          {teamPlayers.map(p => (
-            <span className="pred-player-chip" key={p.id}>
-              <strong>{p.shortName}</strong> <small>({p.position})</small>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="pred-matchups">
-        {opponentsToShow.map((opp) => {
-          const result = predictMatch(teamPlayers, opp.rating, true)
-          const explanation = buildExplanation(team, opp, result.win)
-          return (
-            <div className="pred-matchup" key={opp.code}>
-              <div className="pred-opp">
-                <span className="pred-opp-code">{opp.code}</span>
-                <span className="pred-opp-name">{opp.country}</span>
-                <span className="pred-opp-rating">OVR {opp.rating}</span>
+      {/* player roster by position */}
+      <div className="tc-roster">
+        {(['GK', 'DEF', 'MID', 'FWD'] as const).map(pos => (
+          byPos[pos].length > 0 && (
+            <div className="tc-pos-group" key={pos}>
+              <span className="tc-pos-label">{pos}</span>
+              <div className="tc-pos-players">
+                {byPos[pos].map(p => (
+                  <span className="tc-player-chip" key={p.id}>
+                    <strong>{p.shortName}</strong>
+                    <small>{p.overall}</small>
+                  </span>
+                ))}
               </div>
-              <div className="pred-bars">
-                <div className="pred-bar-row">
-                  <span>Win</span>
-                  <div className="pred-bar"><div className="pred-bar-fill win" style={{ width: `${result.win}%` }} /></div>
-                  <strong>{result.win}%</strong>
-                </div>
-                <div className="pred-bar-row">
-                  <span>Draw</span>
-                  <div className="pred-bar"><div className="pred-bar-fill draw" style={{ width: `${result.draw}%` }} /></div>
-                  <strong>{result.draw}%</strong>
-                </div>
-                <div className="pred-bar-row">
-                  <span>Loss</span>
-                  <div className="pred-bar"><div className="pred-bar-fill loss" style={{ width: `${result.loss}%` }} /></div>
-                  <strong>{result.loss}%</strong>
-                </div>
-              </div>
-              <div className={`pred-verdict ${result.win >= 50 ? 'win' : result.win >= 35 ? 'draw' : 'loss'}`}>
-                {result.win >= 50 ? 'Favoured' : result.win >= 35 ? 'Even' : 'Underdog'}
-              </div>
-              <p className="pred-explanation">{explanation}</p>
             </div>
           )
-        })}
+        ))}
       </div>
-    </article>
+
+      {/* matchup cards grid */}
+      <div className="tc-matchups">
+        {opponentsToShow.map(opp => (
+          <MatchupCard key={opp.code} team={team} opp={opp} teamPlayers={teamPlayers} />
+        ))}
+      </div>
+    </div>
   )
 }
 
 export function PredictionsPage({ publishedTeams }: PredictionsPageProps) {
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
-  const [compareOpponents, setCompareOpponents] = useState<string[]>([])
-
-  const selectedTeam = publishedTeams.find(t => t.id === selectedTeamId) ?? null
+  const [selectedOpps, setSelectedOpps] = useState<string[]>([])
 
   useEffect(() => {
-    const savedCompare = localStorage.getItem('fifyard-compare-opponents')
-    if (savedCompare) {
-      try { setCompareOpponents(JSON.parse(savedCompare)) } catch { /* ignore */ }
-    }
+    try {
+      const saved = localStorage.getItem('fifyard-compare-opponents')
+      if (saved) setSelectedOpps(JSON.parse(saved))
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('fifyard-compare-opponents', JSON.stringify(compareOpponents))
-  }, [compareOpponents])
+    localStorage.setItem('fifyard-compare-opponents', JSON.stringify(selectedOpps))
+  }, [selectedOpps])
 
-  const opponentsToShow: readonly Opponent[] = compareOpponents.length === 0
+  const opponentsToShow: readonly Opponent[] = selectedOpps.length === 0
     ? opponents
-    : opponents.filter(o => compareOpponents.includes(o.code))
+    : opponents.filter(o => selectedOpps.includes(o.code))
+
+  const selectedTeam = publishedTeams.find(t => t.id === selectedTeamId) ?? null
+  const teamsToShow = selectedTeam ? [selectedTeam] : [...publishedTeams].reverse()
 
   if (publishedTeams.length === 0) {
     return (
@@ -202,8 +215,6 @@ export function PredictionsPage({ publishedTeams }: PredictionsPageProps) {
     )
   }
 
-  const teamsToShow = selectedTeam ? [selectedTeam] : [...publishedTeams].reverse()
-
   return (
     <section className="predictions-page">
       <div className="section-heading">
@@ -217,39 +228,52 @@ export function PredictionsPage({ publishedTeams }: PredictionsPageProps) {
         </div>
       </div>
 
-      <div className="pred-controls">
-        <div className="pred-team-selector">
-          <label><BarChart3 size={14} /> Select Team</label>
-          <select value={selectedTeamId ?? ''} onChange={(e) => setSelectedTeamId(e.target.value || null)}>
+      {/* controls row */}
+      <div className="pred-controls-row">
+        <div className="pred-ctrl-group">
+          <label className="pred-ctrl-label">YOUR TEAM</label>
+          <select
+            className="pred-ctrl-select"
+            value={selectedTeamId ?? ''}
+            onChange={(e) => setSelectedTeamId(e.target.value || null)}
+          >
             <option value="">All teams</option>
             {publishedTeams.map(t => (
-              <option key={t.id} value={t.id}>{t.name} ({t.formation})</option>
+              <option key={t.id} value={t.id}>{t.name} · {t.formation}</option>
             ))}
           </select>
         </div>
-        <div className="pred-filter-multi">
-          <label>Compare vs (Ctrl+click to multi-select):</label>
-          <select
-            multiple
-            value={compareOpponents}
-            onChange={(e) => setCompareOpponents(Array.from(e.target.selectedOptions).map(o => o.value))}
-            size={Math.min(opponents.length, 5)}
-          >
+
+        <div className="pred-ctrl-divider">VS</div>
+
+        <div className="pred-ctrl-group">
+          <label className="pred-ctrl-label">OPPONENT{selectedOpps.length > 0 ? ` (${selectedOpps.length} selected)` : ' (all)'}</label>
+          <div className="pred-opp-chips">
             {opponents.map(o => (
-              <option key={o.code} value={o.code}>{o.country} (OVR {o.rating})</option>
+              <button
+                key={o.code}
+                className={`pred-opp-chip ${selectedOpps.includes(o.code) ? 'active' : ''}`}
+                onClick={() => setSelectedOpps(prev =>
+                  prev.includes(o.code) ? prev.filter(c => c !== o.code) : [...prev, o.code]
+                )}
+              >
+                {o.code} <small>{o.rating}</small>
+              </button>
             ))}
-          </select>
-          {compareOpponents.length > 0 && (
-            <button className="pred-clear-btn" onClick={() => setCompareOpponents([])}>Clear filter</button>
-          )}
+            {selectedOpps.length > 0 && (
+              <button className="pred-opp-chip pred-opp-clear" onClick={() => setSelectedOpps([])}>
+                Clear
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      <p className="pred-note">Win probability is a heuristic estimate based on squad rating, opponent strength, and formation. Not betting advice.</p>
+      <p className="pred-note">Win probability is a heuristic based on squad rating, opponent strength, and formation. Not betting advice.</p>
 
-      <div className="pred-teams">
-        {teamsToShow.map((team) => (
-          <TeamPredictions team={team} opponentsToShow={opponentsToShow} key={team.id} />
+      <div className="pred-teams-list">
+        {teamsToShow.map(team => (
+          <TeamCard key={team.id} team={team} opponentsToShow={opponentsToShow} />
         ))}
       </div>
     </section>
