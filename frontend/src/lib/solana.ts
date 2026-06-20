@@ -121,7 +121,7 @@ function nextRpc(): void {
  *  - short delay before retry to avoid thundering herd
  *  - one attempt per endpoint, then one extra retry on the first endpoint
  */
-async function rpc<T>(fn: () => Promise<T>, timeoutMs = 7000, label = 'rpc'): Promise<T> {
+async function rpc<T>(fn: () => Promise<T>, timeoutMs = 30000, label = 'rpc'): Promise<T> {
   // Try each endpoint once, plus one final retry on whichever is current
   const MAX_ATTEMPTS = RPC_ENDPOINTS.length + 1
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
@@ -286,7 +286,7 @@ async function getBlockhashViaPhantom(provider: ReturnType<typeof assertPhantom>
   try {
     const resp = await Promise.race([
       provider.request({ method: 'getLatestBlockhash', params: [{ commitment: 'confirmed' }] }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000)),
     ]) as { value?: { blockhash: string; lastValidBlockHeight: number } } | null
     const val = resp?.value
     if (val?.blockhash && typeof val.lastValidBlockHeight === 'number') {
@@ -387,11 +387,11 @@ export async function fetchShortlist(walletAddress: string): Promise<number[]> {
   // Walk newest → oldest; stop at the first shortlist tx found
   for (const sigInfo of sigs) {
     try {
-      const tx = await rpc(
-        () => connection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 }),
-        5000,
-        'getShortlistTx',
-      ) as LegacyTx | null
+       const tx = await rpc(
+         () => connection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 }),
+         30000,
+         'getShortlistTx',
+       ) as LegacyTx | null
       const memo = parseMemoFromTx(tx)
       if (!memo) continue
       const json = JSON.parse(memo)
