@@ -33,7 +33,7 @@ export function WalletButton({ wallet, onConnected }: WalletButtonProps) {
   return (
     <div className="wallet-control" id="wallet">
       <a className="program-link" href={solscanProgramUrl()} target="_blank" rel="noreferrer">Contract <ExternalLink size={13} /></a>
-      <button className="phantom-button" onClick={connect}><WalletCards size={16} />{wallet ? shortAddress(wallet) : 'Connect Phantom'}</button>
+      <button className="phantom-button" onClick={connect}><WalletCards size={16} />{wallet ? shortAddress(wallet) : 'Connect'}</button>
       {error && <span className="wallet-tooltip" role="alert">{error}</span>}
     </div>
   )
