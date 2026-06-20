@@ -9,12 +9,13 @@ import {
 import type { Formation } from './prediction'
 
 // ── RPC endpoints ─────────────────────────────────────────────────────────────
-// Last known working devnet endpoints (excluding Helius) with Helius kept as fallback.
+// Helius devnet RPC is fast, reliable, and has generous rate limits.
+// We rotate through multiple endpoints to avoid congestion.
 const RPC_ENDPOINTS = [
+  `https://devnet.helius-rpc.com/?api-key=27b54966-770f-4c17-bf13-4de8fe20d584`,
   'https://api.devnet.solana.com',
   'https://rpc.ankr.com/solana_devnet',
   'https://solana-devnet.rpc.extrnode.com',
-  `https://devnet.helius-rpc.com/?api-key=27b54966-770f-4c17-bf13-4de8fe20d584`,
 ]
 
 function makeConnection(url: string) {
