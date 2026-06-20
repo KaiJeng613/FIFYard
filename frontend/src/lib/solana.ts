@@ -1,8 +1,9 @@
 import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
-// Create connection to devnet RPC
-export const connection = new Connection(clusterApiUrl('devnet'), 'confirmed')
+// Use a public RPC with better rate limits, or allow custom endpoint via env
+const RPC_ENDPOINT = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl('devnet')
+export const connection = new Connection(RPC_ENDPOINT, 'confirmed')
 export const programId = new PublicKey('6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKnfujB')
 const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 
@@ -54,6 +55,23 @@ export function isPhantomOnDevnet(): boolean {
   return provider?.network === 'devnet' || !provider?.network
 }
 
+/** Retry with exponential backoff for rate-limited RPC calls */
+async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): Promise<T> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('429') && i < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)))
+        continue
+      }
+      throw err
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
 export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot): Promise<string> {
   const provider = phantomProvider()
   if (!provider) throw new Error('Phantom is not installed')
@@ -72,7 +90,8 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
     data: Buffer.from(message, 'utf8'),
   }))
 
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+  // Retry RPC calls for rate limiting
+  const { blockhash, lastValidBlockHeight } = await retryRpc(() => connection.getLatestBlockhash('confirmed'))
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
 
@@ -81,7 +100,7 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
   const signature = typeof result === 'string' ? result : result.signature
   console.log('Transaction sent:', signature)
 
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+  await retryRpc(() => connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'))
   console.log('Transaction confirmed')
   return signature
 }

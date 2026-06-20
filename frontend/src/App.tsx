@@ -65,15 +65,34 @@ export function App() {
 
   // ── Epoch state ───────────────────────────────────────────────────────────
   const [epoch, setEpoch] = useState<number | null>(null)
+
+  // ── Published teams persistent storage ───────────────────────────────────────
+  const [publishedTeams, setPublishedTeams] = useState<PublishedTeam[]>([])
+
+  // Load from localStorage and auto-connect wallet on mount
   useEffect(() => {
     fetchEpoch().then(setEpoch)
+
+    // Load published teams from localStorage
+    try {
+      const saved = localStorage.getItem('fifyard-teams')
+      if (saved) {
+        const parsed = JSON.parse(saved) as PublishedTeam[]
+        setPublishedTeams(parsed)
+      }
+    } catch { /* ignore */ }
+
+    // Auto-connect if Phantom already has an active session
+    const provider = window.phantom?.solana
+    if (provider?.isPhantom && provider.publicKey) {
+      setWallet(provider.publicKey.toString())
+    }
   }, [])
 
   // ── Publish state ─────────────────────────────────────────────────────────
   const [teamName, setTeamName] = useState('My Team')
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
-  const [publishedTeams, setPublishedTeams] = useState<PublishedTeam[]>([])
   const [lastTxUrl, setLastTxUrl] = useState<string | null>(null)
 
   // ── Derived squad values ──────────────────────────────────────────────────
@@ -133,7 +152,11 @@ export function App() {
         publishedAt: Date.now(),
         txUrl,
       }
-      setPublishedTeams((prev) => [...prev, newTeam])
+      setPublishedTeams((prev) => {
+        const updated = [...prev, newTeam]
+        try { localStorage.setItem('fifyard-teams', JSON.stringify(updated)) } catch { /* ignore */ }
+        return updated
+      })
     } catch (err: unknown) {
       console.error('Publish error:', err)
       setPublishError(String(err))
