@@ -3,7 +3,7 @@ import { Sidebar } from './components/Sidebar'
 import { WalletButton } from './components/WalletButton'
 import { PredictionsPage, type PublishedTeam } from './components/PredictionsPage'
 import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
-import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
+import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl, type OnChainTeam } from './lib/solana'
 import { players, type Player, type Position } from './players'
 
 // ── Types ────────────────────────────────────────────────────────────────────

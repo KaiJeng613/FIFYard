@@ -16,6 +16,19 @@ export type TeamSnapshot = {
   squadRating: number
 }
 
+/** Type for published team data returned from on-chain */
+export type OnChainTeam = {
+  id: string
+  name: string
+  formation: Formation
+  playerIds: number[]
+  squadRating: number
+  opponent: string
+  winRate: number
+  publishedAt: number
+  txUrl: string | null
+}
+
 export function phantomProvider() {
   const provider = window.phantom?.solana
   return provider?.isPhantom ? provider : undefined
@@ -73,36 +86,31 @@ async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): P
 }
 
 /** Fetch all FIFYard team snapshots from a wallet's Memo transactions */
-export async function fetchPublishedTeams(walletAddress: string): Promise<PublishedTeam[]> {
+export async function fetchPublishedTeams(walletAddress: string): Promise<OnChainTeam[]> {
   const pubKey = new PublicKey(walletAddress)
-  const MEMO_PROGRAM_ID = memoProgramId
 
   // Get all transaction signatures for this wallet
   const sigs = await retryRpc(() => connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }))
 
-  const teams: PublishedTeam[] = []
+  const teams: OnChainTeam[] = []
 
   for (const sigInfo of sigs) {
     const sig = sigInfo.signature
     try {
-      const tx = await retryRpc(() => connection.getTransaction(sig, { maxSupportedTransactionVersion: 0 }))
+      const tx = await retryRpc(() => connection.getTransaction(sig))
       if (!tx || !tx.transaction) continue
 
+      // Parse transaction message for memo instructions
       const msg = tx.transaction.message
-      const isMemoTx = msg.instructions.some((ix) => {
-        const ixKey = 'programId' in ix ? ix.programId : (ix.programIdIndex !== undefined ? msg.accountKeys[ix.programIdIndex] : null)
-        return ixKey?.equals && ixKey.equals(MEMO_PROGRAM_ID)
-      })
+      const isLegacy = !('version' in msg) || msg.version === undefined
 
-      if (!isMemoTx) continue
+      if (!isLegacy) continue // Skip versioned transactions for simplicity
 
-      // Extract memo data
-      const memoIx = msg.instructions.find((ix) => {
-        const ixKey = 'programId' in ix ? ix.programId : (ix.programIdIndex !== undefined ? msg.accountKeys[ix.programIdIndex] : null)
-        return ixKey?.equals && ixKey.equals(MEMO_PROGRAM_ID)
-      })
+      const instructions = (msg as { instructions: { programIdIndex: number; data?: Buffer[] }[] }).instructions
+      const accountKeys = (msg as { accountKeys: PublicKey[] }).accountKeys
 
-      if (!memoIx || !('data' in memoIx) || !memoIx.data) continue
+      const memoIx = instructions.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
+      if (!memoIx?.data?.[0]) continue
 
       const data = Buffer.from(memoIx.data[0], 'base64').toString('utf8')
       const json = JSON.parse(data)
