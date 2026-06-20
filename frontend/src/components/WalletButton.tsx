@@ -1,12 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, History, LogOut, Settings, WalletCards } from 'lucide-react'
-import { fetchBalance, phantomProvider } from '../lib/solana'
+import { AlertTriangle, ChevronDown, History, LogOut, WalletCards } from 'lucide-react'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { phantomProvider } from '../lib/solana'
 
 interface WalletButtonProps {
   wallet: string | null
   onConnected: (address: string) => void
   onDisconnected: () => void
   onShowHistory: () => void
+}
+
+// Dedicated fast endpoints just for balance — independent of the shared RPC connection
+const BALANCE_RPCS = [
+  'https://api.devnet.solana.com',
+  'https://rpc.devnet.sonic.game',
+]
+
+async function fetchBalanceDirect(address: string): Promise<number> {
+  const pubkey = new PublicKey(address)
+  for (const endpoint of BALANCE_RPCS) {
+    try {
+      const conn = new Connection(endpoint, 'confirmed')
+      const lamports = await Promise.race([
+        conn.getBalance(pubkey),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+      ])
+      return lamports
+    } catch {
+      // try next endpoint
+    }
+  }
+  return 0
 }
 
 function shortAddress(address: string) {
@@ -18,20 +42,22 @@ function formatSOL(lamports: number): string {
 }
 
 export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistory }: WalletButtonProps) {
-  const [error, setError] = useState('')
-  const [open, setOpen] = useState(false)
+  const [error, setError]     = useState('')
+  const [open, setOpen]       = useState(false)
   const [balance, setBalance] = useState<number | null>(null)
   const [network, setNetwork] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Fetch balance and network when wallet is connected
   useEffect(() => {
     if (!wallet) {
       setBalance(null)
       setNetwork(null)
       return
     }
-    fetchBalance(wallet).then(setBalance)
+
+    setBalance(null) // reset to show fresh load
+    fetchBalanceDirect(wallet).then(setBalance)
+
     const p = phantomProvider()
     setNetwork(p?.network ?? null)
   }, [wallet])
@@ -52,22 +78,16 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       setError('Phantom not found — install page opened.')
       return
     }
-
-    // If already connected, don't try to connect again
     if (provider.publicKey) {
       onConnected(provider.publicKey.toString())
       return
     }
-
     try {
       const result = await provider.connect({ onlyTrusted: false })
       onConnected(result.publicKey.toString())
     } catch (err: unknown) {
-      // Don't show error on immediate window close without rejection
       const msg = err instanceof Error ? err.message : ''
-      if (msg && !msg.includes('rejected')) {
-        setError(msg)
-      }
+      if (msg && !msg.includes('rejected')) setError(msg)
     }
   }
 
@@ -75,9 +95,7 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
     setOpen(false)
     const provider = phantomProvider()
     try { await provider?.disconnect() } catch { /* ignore */ }
-    if (window.phantom?.solana) {
-      delete window.phantom.solana
-    }
+    if (window.phantom?.solana) delete window.phantom.solana
     onDisconnected()
   }
 
@@ -94,23 +112,26 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
 
   return (
     <div className="wallet-control" ref={ref}>
-      <button className="phantom-button connected" onClick={() => setOpen((v) => !v)}>
+      <button className="phantom-button connected" onClick={() => setOpen(v => !v)}>
         <WalletCards size={16} />
         {shortAddress(wallet)}
+        {balance !== null && (
+          <span className="phantom-balance">{formatSOL(balance)} SOL</span>
+        )}
         <ChevronDown size={13} className={open ? 'chevron-up' : ''} />
       </button>
+
       {open && (
         <div className="wallet-dropdown">
           <div className="wallet-dropdown-address">{wallet}</div>
-          <div className="wallet-balance">Balance: {balance !== null ? `${formatSOL(balance)} SOL` : 'Loading…'}</div>
+          <div className="wallet-balance">
+            {balance !== null ? `${formatSOL(balance)} SOL` : 'Fetching balance…'}
+          </div>
           {network && network !== 'devnet' && (
             <span className="wallet-network-warning">
               <AlertTriangle size={12} /> Wrong network: {network}. Switch to Devnet in Phantom.
             </span>
           )}
-          <button onClick={() => setOpen(false)}>
-            <Settings size={14} /> Settings
-          </button>
           <button onClick={() => { setOpen(false); onShowHistory() }}>
             <History size={14} /> Published teams
           </button>
