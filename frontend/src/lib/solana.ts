@@ -215,3 +215,81 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
   console.log('Transaction confirmed:', signature)
   return signature
 }
+
+// ── Shortlist (on-chain via Memo) ────────────────────────────────────────────
+
+/** Write the current shortlist player IDs to chain as a Memo transaction. */
+export async function publishShortlist(ownerAddress: string, playerIds: number[]): Promise<string> {
+  const provider = phantomProvider()
+  if (!provider) throw new Error('Phantom is not installed')
+  if (provider.network && provider.network !== 'devnet') {
+    throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
+  }
+
+  const owner = new PublicKey(ownerAddress)
+  const message = JSON.stringify({ app: 'FIFYard', v: 1, type: 'shortlist', playerIds })
+  const transaction = new Transaction().add(new TransactionInstruction({
+    programId: memoProgramId,
+    keys: [{ pubkey: owner, isSigner: true, isWritable: false }],
+    data: Buffer.from(message, 'utf8'),
+  }))
+
+  let blockhashResult
+  try {
+    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
+  } catch (err) {
+    await switchRpc()
+    return publishShortlist(ownerAddress, playerIds)
+  }
+  const { blockhash, lastValidBlockHeight } = blockhashResult
+  transaction.feePayer = owner
+  transaction.recentBlockhash = blockhash
+
+  const result = await provider.signAndSendTransaction(transaction)
+  const signature = typeof result === 'string' ? result : result.signature
+
+  try {
+    await withTimeout(
+      connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
+      30000,
+      'confirmTransaction',
+    )
+  } catch { /* timeout — tx may still land */ }
+
+  return signature
+}
+
+/** Fetch the most recent shortlist for a wallet from on-chain Memo transactions. */
+export async function fetchShortlist(walletAddress: string): Promise<number[]> {
+  const pubKey = new PublicKey(walletAddress)
+  let sigs: Array<{ signature: string; blockTime?: number | null }>
+  try {
+    sigs = await withTimeout(
+      connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 50 }),
+      5000,
+      'fetchShortlistSigs',
+    )
+  } catch (err) {
+    await switchRpc()
+    return fetchShortlist(walletAddress)
+  }
+
+  // Walk newest → oldest, return first shortlist found
+  for (const sigInfo of sigs) {
+    try {
+      const tx = await withTimeout(connection.getTransaction(sigInfo.signature), 3000, 'getShortlistTx')
+      if (!tx?.transaction) continue
+      const msg = tx.transaction.message
+      if ('version' in msg && msg.version !== undefined) continue
+      const accountKeys = (msg as { accountKeys: PublicKey[] }).accountKeys
+      const compiledIx = (msg as { instructions: { programIdIndex: number; data: string }[] }).instructions
+      const memoIx = compiledIx.find(ix => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
+      if (!memoIx?.data) continue
+      const json = JSON.parse(Buffer.from(memoIx.data, 'base64').toString('utf8'))
+      if (json.app === 'FIFYard' && json.v === 1 && json.type === 'shortlist') {
+        return json.playerIds as number[]
+      }
+    } catch { continue }
+  }
+  return []
+}

@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
-import { BarChart3, Shield, UsersRound } from 'lucide-react'
+import { BarChart3, Shield, UsersRound, Users } from 'lucide-react'
 
-type Page = 'squad' | 'predictions'
+type Page = 'squad' | 'players' | 'predictions'
 
 interface SidebarProps {
   activePage: Page
@@ -10,6 +10,7 @@ interface SidebarProps {
 
 const navItems: Array<{ label: string; icon: LucideIcon; page: Page }> = [
   { label: 'Team Studio', icon: UsersRound, page: 'squad' },
+  { label: 'Players', icon: Users, page: 'players' },
   { label: 'Predictions', icon: BarChart3, page: 'predictions' },
 ]
 

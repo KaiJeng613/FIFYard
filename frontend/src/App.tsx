@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { WalletButton } from './components/WalletButton'
 import { PredictionsPage, type PublishedTeam } from './components/PredictionsPage'
+import { PlayersPage } from './components/PlayersPage'
 import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
-import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
+import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl, fetchShortlist, publishShortlist } from './lib/solana'
 import { players, type Player, type Position } from './players'
 
-type Page = 'squad' | 'predictions'
+type Page = 'squad' | 'players' | 'predictions'
 
 const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
@@ -54,6 +55,10 @@ export function App() {
   const [epoch, setEpoch] = useState<number | null>(null)
 
   const [publishedTeams, setPublishedTeams] = useState<PublishedTeam[]>([])
+
+  // ── Shortlist state ───────────────────────────────────────────────────────
+  const [shortlist, setShortlist] = useState<number[]>([])
+  const [savingShortlist, setSavingShortlist] = useState(false)
 
   const [teamName, setTeamName] = useState('My Team')
   const [publishing, setPublishing] = useState(false)
@@ -126,8 +131,19 @@ export function App() {
           return onChainTeams
         })
       }).catch(console.error)
+
+      fetchShortlist(wallet).then((ids) => {
+        if (ids.length > 0) setShortlist(ids)
+      }).catch(console.error)
     }
   }, [wallet])
+
+  async function handleSaveShortlist(ids: number[]) {
+    if (!wallet) return
+    setSavingShortlist(true)
+    try { await publishShortlist(wallet, ids) } catch (e) { console.error(e) }
+    finally { setSavingShortlist(false) }
+  }
 
   // ── Derived squad values ──────────────────────────────────────────────────
   const selectedPlayers = useMemo(
@@ -410,6 +426,18 @@ export function App() {
                 </aside>
               </div>
             </section>
+          )}
+
+          {page === 'players' && (
+            <div className="workspace">
+              <PlayersPage
+                wallet={wallet}
+                shortlist={shortlist}
+                onShortlistChange={setShortlist}
+                onSaveShortlist={handleSaveShortlist}
+                saving={savingShortlist}
+              />
+            </div>
           )}
 
           {page === 'predictions' && (
