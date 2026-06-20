@@ -8,6 +8,7 @@ declare_id!("6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKnfujB");
 const MAX_NAME_LEN: usize = 32;
 const MAX_URI_LEN: usize = 160;
 const MAX_FORMATION_LEN: usize = 8;
+const COUNTRY_CODE_LEN: usize = 3;
 const STARTING_VERSION: u32 = 1;
 
 #[program]
@@ -85,11 +86,15 @@ pub mod fifyard {
         squad_id: u32,
         name: String,
         formation: String,
+        country_code: String,
+        opponent_rating: u8,
         player_ids: [u32; 11],
     ) -> Result<()> {
         require!(name.as_bytes().len() <= MAX_NAME_LEN, FifyardError::NameTooLong);
         require!(formation.as_bytes().len() <= MAX_FORMATION_LEN, FifyardError::InvalidFormation);
         require!(is_supported_formation(&formation), FifyardError::InvalidFormation);
+        require!(is_country_code(&country_code), FifyardError::InvalidCountryCode);
+        require!(opponent_rating <= 100, FifyardError::StatOutOfRange);
         require!(ctx.remaining_accounts.len() == 22, FifyardError::ElevenPlayersRequired);
 
         let unique: BTreeSet<u32> = player_ids.iter().copied().collect();
@@ -119,10 +124,14 @@ pub mod fifyard {
         let squad = &mut ctx.accounts.squad;
         squad.owner = ctx.accounts.owner.key();
         squad.squad_id = squad_id;
+        let rating = (total_rating / 11) as u8;
         squad.name = name;
         squad.formation = formation;
+        squad.country_code = country_code;
         squad.player_ids = player_ids;
-        squad.rating = (total_rating / 11) as u8;
+        squad.rating = rating;
+        squad.opponent_rating = opponent_rating;
+        squad.predicted_win_bps = predicted_win_bps(rating, opponent_rating);
         squad.created_at = Clock::get()?.unix_timestamp;
         squad.bump = ctx.bumps.squad;
         Ok(())
@@ -232,8 +241,12 @@ pub struct Squad {
     pub name: String,
     #[max_len(8)]
     pub formation: String,
+    #[max_len(3)]
+    pub country_code: String,
     pub player_ids: [u32; 11],
     pub rating: u8,
+    pub opponent_rating: u8,
+    pub predicted_win_bps: u16,
     pub created_at: i64,
     pub bump: u8,
 }
@@ -278,6 +291,16 @@ fn is_supported_formation(formation: &str) -> bool {
     matches!(formation, "4-3-3" | "4-4-2" | "3-5-2" | "4-2-3-1")
 }
 
+fn is_country_code(country_code: &str) -> bool {
+    country_code.len() == COUNTRY_CODE_LEN
+        && country_code.bytes().all(|byte| byte.is_ascii_uppercase())
+}
+
+fn predicted_win_bps(team_rating: u8, opponent_rating: u8) -> u16 {
+    let difference = team_rating as i32 - opponent_rating as i32;
+    (5_000 + difference * 350).clamp(500, 9_500) as u16
+}
+
 fn formation_counts(formation: &str) -> Result<[u8; 4]> {
     match formation {
         "4-3-3" => Ok([1, 4, 3, 3]),
@@ -302,6 +325,8 @@ pub enum FifyardError {
     DuplicatePlayer,
     #[msg("The formation is not supported")]
     InvalidFormation,
+    #[msg("Country code must contain exactly three uppercase ASCII letters")]
+    InvalidCountryCode,
     #[msg("The lineup does not satisfy positional requirements")]
     InvalidLineup,
     #[msg("A supplied account is not a FIFYard player")]
@@ -333,5 +358,13 @@ mod tests {
         assert!(is_supported_formation("4-3-3"));
         assert!(!is_supported_formation("1-1-8"));
         assert_eq!(formation_counts("4-3-3").unwrap(), [1, 4, 3, 3]);
+    }
+
+    #[test]
+    fn prediction_is_deterministic_and_bounded() {
+        assert_eq!(predicted_win_bps(90, 90), 5_000);
+        assert_eq!(predicted_win_bps(100, 50), 9_500);
+        assert!(is_country_code("MAS"));
+        assert!(!is_country_code("Malaysia"));
     }
 }

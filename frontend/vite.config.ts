@@ -15,5 +15,15 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          icons: ['lucide-react'],
+          solana: ['@solana/web3.js'],
+        },
+      },
+    },
+  },
 })
-
