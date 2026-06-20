@@ -234,7 +234,7 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
     txs = []
     for (const sig of sigStrings) {
       try {
-        const tx = await rpc(() => connection.getTransaction(sig, { maxSupportedTransactionVersion: 0 }), 5000, 'getTransaction') as LegacyTx | null
+        const tx = await rpc(() => connection.getTransaction(sig, { maxSupportedTransactionVersion: 0 }), 30000, 'getTransaction') as LegacyTx | null
         txs.push(tx)
         await sleep(120) // 120ms between requests ≈ ~8 req/s, well under 429 threshold
       } catch {
