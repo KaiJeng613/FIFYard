@@ -13,6 +13,7 @@ interface SolanaProvider {
   connect(options?: ConnectOptions): Promise<{ publicKey: { toString(): string } }>
   disconnect(): Promise<void>
   signAndSendTransaction(transaction: import('@solana/web3.js').Transaction): Promise<string | { signature: string }>
+  request(args: { method: string; params?: unknown[] | unknown }): Promise<unknown>
   // Phantom exposes network when connected (may be undefined for older versions)
   network?: PhantomNetwork
 }

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, History, LogOut, WalletCards } from 'lucide-react'
-import { Connection, PublicKey } from '@solana/web3.js'
 import { phantomProvider } from '../lib/solana'
 
 interface WalletButtonProps {
@@ -10,37 +9,63 @@ interface WalletButtonProps {
   onShowHistory: () => void
 }
 
-// Same endpoints as solana.ts — all are genuine Solana devnet nodes
-const BALANCE_RPCS = [
-  'https://api.devnet.solana.com',
-  'https://rpc.ankr.com/solana_devnet',
-  'https://solana-devnet.rpc.extrnode.com',
-]
+function timeout<T>(ms: number): Promise<T> {
+  return new Promise<T>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+}
 
 async function fetchBalanceDirect(address: string): Promise<number | null> {
-  const pubkey = new PublicKey(address)
-  for (const endpoint of BALANCE_RPCS) {
+  // ── Strategy 1: ask Phantom directly via its own JSON-RPC request ──────────
+  // Phantom already holds an open, authenticated devnet connection — no rate
+  // limit applies, no CORS issue, fastest path.
+  try {
+    const provider = phantomProvider()
+    if (provider) {
+      const resp = await Promise.race([
+        provider.request({ method: 'getBalance', params: [address, { commitment: 'confirmed' }] }),
+        timeout<never>(4000),
+      ]) as { value: number } | number
+      const lamports = typeof resp === 'number' ? resp : (resp as { value: number }).value
+      if (typeof lamports === 'number') {
+        console.log(`Balance via Phantom RPC: ${lamports} lamports`)
+        return lamports
+      }
+    }
+  } catch (e) {
+    console.warn('Phantom RPC balance failed:', e)
+  }
+
+  // ── Strategy 2: raw fetch() to public devnet nodes ─────────────────────────
+  // Using fetch() directly bypasses the Solana.js retry logic that can cause
+  // silent 429 returns of 0. We parse the JSON-RPC response ourselves.
+  const RPC_ENDPOINTS = [
+    'https://api.devnet.solana.com',
+    'https://rpc.ankr.com/solana_devnet',
+  ]
+  const body = JSON.stringify({
+    jsonrpc: '2.0', id: 1,
+    method: 'getBalance',
+    params: [address, { commitment: 'confirmed' }],
+  })
+  for (const url of RPC_ENDPOINTS) {
     try {
-      const conn = new Connection(endpoint, {
-        commitment: 'confirmed',
-        disableRetryOnRateLimit: true,
-      })
-      const lamports = await Promise.race<number>([
-        conn.getBalance(pubkey),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
-      ])
-      // A real wallet with SOL will return > 0. If we get 0 from a healthy
-      // endpoint that would be a valid balance, so return it. Only skip if
-      // the call outright threw (caught below).
-      console.log(`Balance from ${endpoint}: ${lamports} lamports`)
-      return lamports
-    } catch (err) {
-      console.warn(`Balance fetch failed on ${endpoint}:`, err)
-      // Try the next endpoint
+      const res = await Promise.race([
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
+        timeout<never>(5000),
+      ]) as Response
+      if (!res.ok) { console.warn(`${url} returned ${res.status}`); continue }
+      const json = await res.json() as { result?: { value?: number }; error?: unknown }
+      if (json.error) { console.warn(`${url} RPC error:`, json.error); continue }
+      const lamports = json.result?.value
+      if (typeof lamports === 'number') {
+        console.log(`Balance via ${url}: ${lamports} lamports`)
+        return lamports
+      }
+    } catch (e) {
+      console.warn(`Balance fetch failed on ${url}:`, e)
     }
   }
-  // All endpoints failed — return null so the UI shows an error state
-  return null
+
+  return null // all strategies failed
 }
 
 function shortAddress(address: string) {
