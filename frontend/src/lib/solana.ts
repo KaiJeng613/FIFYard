@@ -1,7 +1,7 @@
 import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
-// All devnet RPC endpoints - NO testnet/mainnet
+// All devnet RPC endpoints
 const RPC_ENDPOINTS = [
   'https://api.devnet.solana.com',
   'https://devnet.helius-rpc.com',
@@ -16,7 +16,7 @@ export function getConnection(): Connection {
   return connection
 }
 
-export const programId = new PublicKey('6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKnfujB')
+export const programId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 
 export type TeamSnapshot = {
@@ -59,10 +59,10 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string
     new Promise<T>((_, reject) =>
       setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
     ),
-  ]) as T
+  ])
 }
 
-async function switchRpc(): void {
+async function switchRpc(): Promise<void> {
   if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
     currentRpcIndex++
     connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
@@ -101,9 +101,13 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
   const pubKey = new PublicKey(walletAddress)
   console.log('Fetching teams for:', pubKey.toBase58())
 
-  let sigs: { signature: string; blockTime: number | null }[]
+  let sigs: Array<{ signature: string; blockTime?: number | null }>
   try {
-    sigs = await withTimeout(connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }), 5000, 'fetchSignatures')
+    sigs = await withTimeout(
+      connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }),
+      5000,
+      'fetchSignatures',
+    )
   } catch (err) {
     console.error('Signature fetch error:', err)
     await switchRpc()
@@ -193,16 +197,21 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
 
-  console.log('Publishing to devnet, fee payer:', owner.toBase58())
+  console.log('Publishing to devnet via Memo program, fee payer:', owner.toBase58())
   const result = await provider.signAndSendTransaction(transaction)
   const signature = typeof result === 'string' ? result : result.signature
   console.log('Transaction sent:', signature)
 
   try {
-    await withTimeout(connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'), 30000, 'confirmTransaction')
+    await withTimeout(
+      connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
+      30000,
+      'confirmTransaction',
+    )
   } catch (err) {
-    console.error('Confirm error (checking status anyway):', err)
+    console.error('Confirm timeout (tx may still succeed):', err)
   }
-  console.log('Transaction confirmed')
+
+  console.log('Transaction confirmed:', signature)
   return signature
 }
