@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ExternalLink, History, LogOut, Settings, WalletCards } from 'lucide-react'
-import { phantomProvider, solscanProgramUrl } from '../lib/solana'
+import { fetchBalance, phantomProvider, solscanProgramUrl } from '../lib/solana'
 
 interface WalletButtonProps {
   wallet: string | null
@@ -13,10 +13,24 @@ function shortAddress(address: string) {
   return `${address.slice(0, 4)}…${address.slice(-4)}`
 }
 
+function formatSOL(lamports: number): string {
+  return (lamports / 1_000_000_000).toFixed(3)
+}
+
 export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistory }: WalletButtonProps) {
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
+  const [balance, setBalance] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+
+  // Fetch balance when wallet is connected
+  useEffect(() => {
+    if (!wallet) {
+      setBalance(null)
+      return
+    }
+    fetchBalance(wallet).then(setBalance)
+  }, [wallet])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -35,7 +49,6 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       return
     }
     try {
-      // If already connected but we're re-connecting, force wallet selector
       if (provider.publicKey) {
         await provider.disconnect()
         delete window.phantom?.solana
@@ -51,7 +64,6 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
     setOpen(false)
     const provider = phantomProvider()
     try { await provider?.disconnect() } catch { /* ignore */ }
-    // Clear Phantom's internal state to force fresh connect on next click
     if (window.phantom?.solana) {
       delete window.phantom.solana
     }
@@ -85,7 +97,8 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       {open && (
         <div className="wallet-dropdown">
           <div className="wallet-dropdown-address">{wallet}</div>
-          <button onClick={() => { setOpen(false) }}>
+          <div className="wallet-balance">Balance: {balance !== null ? `${formatSOL(balance)} SOL` : 'Loading…'}</div>
+          <button onClick={() => setOpen(false)}>
             <Settings size={14} /> Settings
           </button>
           <button onClick={() => { setOpen(false); onShowHistory() }}>
