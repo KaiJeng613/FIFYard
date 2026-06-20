@@ -1,80 +1,106 @@
 # FIFYard
 
-FIFYard is a Solana devnet MVP for collectible football players, verifiable player statistics, and on-chain 11-player squads.
+FIFYard is a Solana devnet application for collectible football player cards, verifiable on-chain player statistics, squad building, player market, and match predictions. Managers can assemble a starting XI, publish it on-chain, purchase players, and compare their squad's predicted win rate against any national team.
 
-The repository contains:
+Live deployment: **[fifyard.vercel.app](https://fifyard.vercel.app)**
 
-- An Anchor/Rust program in `programs/fifyard`
-- A responsive React/Vite squad-building UI in `frontend`
-- Devnet configuration in `Anchor.toml`
+---
 
-## Product experience
+## Pages
 
-The frontend follows a collectible-vault model inspired by physical-card marketplaces:
+### 01 / Team Studio — `/#squad`
 
-- **Player Vault:** browse unique player cards with live ratings, position filters, collection value, floor-price placeholders, and card/list layouts.
-- **Simulation profiles:** customize pace/running, kicking/shooting, passing, ball control, defending, and stamina. These are user-owned simulation values; they never overwrite official oracle statistics.
-- **Country Team Studio:** choose a country, formation, opponent, and exactly eleven owned players.
-- **Prediction model:** shows win/draw/loss probabilities from squad rating, opponent strength, and formation validity. The current model is an explainable heuristic, not a trained model or betting product.
-- **Devnet publishing:** signs a compact team snapshot with Phantom, publishes it through Solana's Memo program, and returns a Solscan devnet transaction link.
+The core squad builder. Select exactly 11 players across the correct positional slots for your chosen formation and publish the lineup to Solana devnet.
 
-## What is implemented
+- **Formation switcher** — 4-3-3, 4-4-2, 3-5-2, 4-2-3-1. Switching formation **auto-adjusts** the selected roster: surplus players from over-represented positions are dropped (lowest-rated first) and the best available players from deficit positions are added automatically.
+- **Live pitch view** — players render on a colour-coded pitch grid matching the chosen formation's slot layout.
+- **Squad summary bar** — shows squad rating, formation, predicted win rate against the chosen opponent, team name input, and the Submit XI button.
+- **Player Intelligence panel** — click any pitch card or list row to inspect full stats (PAC, SHO, PAS, DRI, DEF, STA) with animated rating bars.
+- **On-chain publishing** — signs a Memo transaction via Phantom. The payload `{ app:"FIFYard", v:1, name, formation, playerIds, opponent, winRate, squadRating }` is stored permanently on devnet. Every successful publish produces a Solscan devnet link.
+- **Validation** — the Submit XI button stays disabled until the lineup satisfies the exact positional count for the chosen formation.
 
-### Player accounts
+### 02 / Players — `/#players`
 
-Each player is a program-derived account (PDA) containing:
+The player market. Browse, filter, shortlist, and purchase player cards.
 
-- Stable player ID, name, and position
-- The public key of the player's NFT mint
-- Pace, shooting, passing, dribbling, defending, and stamina (0–100)
-- A position-weighted overall rating
-- Metadata URI, data version, and last-update timestamp
+- **Sortable table** — all 27 players sortable by OVR, PAC, SHO, PAS, DRI, DEF, STA, or PRICE. Click any column header to sort; click again to reverse.
+- **Position & search filters** — filter by GK / DEF / MID / FWD or by name.
+- **Player detail panel** — full stat bars, market value in SOL, formation style analysis, and action buttons.
+- **Shortlist** — star any player to add to your shortlist. Shortlisted players are highlighted with a gold border. The shortlist is written on-chain as a Memo transaction (`type:"shortlist"`) and restored automatically on wallet reconnect.
+- **Buy player** — sends a real SOL transfer (devnet) to the treasury wallet plus a Memo receipt `{ type:"purchase", playerId, playerName, priceSOL, buyer }` in one atomic transaction. Phantom prompts for approval. On success the player is marked OWNED, auto-shortlisted, and a Solscan link appears.
+- **Devnet floor prices** — scaled to 0.02–0.09 SOL so purchases are practical on a devnet airdrop balance.
 
-Only the configured statistics authority can create players or update ratings. Every change increments the player's version.
+### 03 / Predictions — `/#predictions`
 
-### Collectible ownership and squads
+Compare any published team against any set of national opponents.
 
-The NFT represents ownership; the Player PDA represents canonical, mutable sports data. `create_squad` requires 11 unique Player PDAs plus 11 matching classic SPL Token accounts. It verifies that the signer holds each player's token, checks minimum positional rules, and calculates the squad rating from player accounts rather than trusting the client.
+- **Team selector** — choose one of your published teams or view all.
+- **Opponent filter** — toggle country chip buttons (ARG, BRA, FRA, ENG, ESP, POR, MAS) to show only the matchups you care about.
+- **Player roster strip** — shows each player's short name and OVR grouped by position (GK / DEF / MID / FWD).
+- **Matchup cards** — one card per opponent showing:
+  - Your team vs opponent with ratings side by side
+  - Large win % coloured green (favoured), blue (even), or red (underdog)
+  - Win / Draw / Loss probability bars
+  - Plain-English explanation: squad OVR delta, forward count, midfield depth, defensive line, overall outlook
+- **Formation style tags** — Attacking Forwards, Strong Midfield, or Solid Defense tags appear when a position group's average rating exceeds the squad average by more than 10%.
 
-Supported MVP formations are `4-3-3`, `4-4-2`, `3-5-2`, and `4-2-3-1`. The program enforces the exact goalkeeper/defender/midfielder/forward count encoded by the selected formation.
+---
 
-The Squad account also records a three-letter country code, opponent rating, and deterministic predicted win rate in basis points. This lets other Solana applications inspect the inputs and reproduce the contract result.
+## Wallet & on-chain data
 
-## Phantom wallet and Solscan
+**Phantom** is the only supported wallet. Connect via the button in the top-right corner. Once connected:
 
-Phantom is intentionally the default and only wallet provider used by the current UI. Connecting Phantom does not transfer funds or give FIFYard custody. It exposes the wallet's public address and lets the owner approve specific transactions.
+- SOL balance is fetched directly via RPC with a 4-second timeout and automatic fallback across multiple devnet endpoints — no infinite loading.
+- Balance is shown as a green pill inside the connected button.
+- On wallet connect, published teams and the shortlist are fetched from on-chain Memo transactions and restored.
+- Published teams history is accessible from the wallet dropdown → **Published teams**.
 
-The wallet enables:
+All devnet transactions are visible on Solscan with `?cluster=devnet`.
 
-1. Proving which player NFTs the user owns.
-2. Signing team-formation publications and paying the small devnet transaction fee.
-3. Future player purchases, sales, transfers, prediction entries, and reward claims.
-4. Associating on-chain squads with the user's public address.
+---
 
-Every successful team publication links to:
+## URL routing
 
-```text
-https://solscan.io/tx/<SIGNATURE>?cluster=devnet
+All three pages are directly linkable via URL hash:
+
+| URL | Page |
+|---|---|
+| `https://fifyard.vercel.app/` | Team Studio |
+| `https://fifyard.vercel.app/#squad` | Team Studio |
+| `https://fifyard.vercel.app/#players` | Players Market |
+| `https://fifyard.vercel.app/#predictions` | Predictions |
+
+Browser back/forward buttons work correctly.
+
+---
+
+## On-chain data format
+
+All FIFYard data is stored via the **Solana Memo program** (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) as UTF-8 JSON in Memo instructions. No custom program is required for devnet publishing.
+
+### Team snapshot
+```json
+{ "app": "FIFYard", "v": 1, "name": "My Team", "formation": "4-3-3",
+  "playerIds": [13,8,9,10,11,4,5,6,0,1,2], "opponent": "ARG",
+  "winRate": 42, "squadRating": 89 }
 ```
 
-The header also links to the configured FIFYard program account on Solscan. Until the Anchor program is deployed and seeded, the live publish button uses the standard Memo program. Once deployment is complete, replace that call with the generated Anchor `create_squad` client instruction; Solscan will then display FIFYard as the interacting program.
+### Shortlist
+```json
+{ "app": "FIFYard", "v": 1, "type": "shortlist", "playerIds": [0,4,13] }
+```
 
-## Why stats should not live only in NFT metadata
+### Player purchase receipt
+```json
+{ "app": "FIFYard", "v": 1, "type": "purchase", "playerId": 1,
+  "playerName": "Kylian Mbappé", "priceSOL": 0.09, "buyer": "<address>", "ts": 1718867115000 }
+```
 
-NFT JSON is useful for artwork and a readable trait snapshot, but it normally lives off-chain and can become stale. FIFYard instead uses two linked records:
+The purchase transaction also contains a `SystemProgram.transfer` instruction sending the SOL amount to the treasury, making the purchase payment and receipt atomic.
 
-1. **NFT mint + metadata:** collectible identity, image, edition, display traits, and update authority.
-2. **Player PDA:** compact canonical stats used by contracts, games, and squad validation.
+---
 
-The Player PDA stores the NFT mint so consumers can verify the relationship. When statistics change, an indexer can regenerate metadata JSON from the PDA, while on-chain applications continue to read the authoritative PDA.
-
-For production, the update authority should be a multisig or an oracle service. A practical ingestion pipeline is:
-
-`licensed data feed → normalization/signing worker → authority transaction → Player PDA → indexer/API → refreshed NFT metadata`
-
-Store only normalized ratings and a hash/version of the source dataset on-chain. Raw match events are too large and expensive; keep them in durable object storage or a permanent-content network and anchor their hash in the update transaction.
-
-## Local frontend
+## Local development
 
 Prerequisites: Node.js 20+ and npm.
 
@@ -84,8 +110,6 @@ npm install
 npm run dev
 ```
 
-The current UI uses demo player data because no Player PDAs exist until the program is deployed and seeded. Phantom connection and Memo-based devnet publishing are live. Direct `create_squad` submission still requires a deployed program ID, generated IDL, NFT mints, and token accounts.
-
 Production build:
 
 ```bash
@@ -93,42 +117,49 @@ cd frontend
 npm run build
 ```
 
-## Build and deploy to devnet
+---
 
-`solana.new` has been installed for this environment. Its setup script installs agent skills; it does not install Rust, the Solana CLI, or Anchor. Install those prerequisites before running the contract commands.
+## Planned enhancements
 
-Then configure and fund a devnet wallet:
+### Real-time player statistics
 
-```bash
-solana config set --url devnet
-solana-keygen new
-solana airdrop 2
-solana balance
-```
+Currently player stats (pace, shooting, passing, dribbling, defending, stamina, overall) are seeded from a static dataset. The planned architecture:
 
-Build with Anchor, synchronize the generated deployment key with the source, rebuild, and deploy:
+1. **Licensed data feed** — ingest from a provider (e.g. StatsBomb, Opta) after each match week.
+2. **Normalisation worker** — map raw match events to 0–100 ratings using the position-weighted formula already in `prediction.ts`. Sign the payload with a statistics authority key.
+3. **On-chain update** — authority calls `update_player` on the FIFYard Anchor program, incrementing `data_version` and `updated_at` on each Player PDA.
+4. **Indexer** — listens for `update_player` events and regenerates NFT metadata JSON so marketplaces see fresh traits.
+5. **Frontend** — replaces the static `players.ts` array with fetched Player PDA accounts; ratings update live without a redeploy.
 
-```bash
-anchor build
-anchor keys sync
-anchor build
-anchor deploy --provider.cluster devnet
-```
+### Player win rates
 
-`anchor keys sync` replaces the temporary valid program ID currently committed in `declare_id!` and `Anchor.toml` with the deploy key generated under `target/deploy`.
+Per-player win rate contribution is not yet tracked individually. The planned approach:
 
-After deployment:
+1. After each published squad's match result is known (via an oracle or match result authority), record `{ playerId, opponent, result }` in a Match Result PDA.
+2. Each Player PDA accumulates `wins`, `draws`, `losses`, and a rolling ELO-style contribution score.
+3. The Predictions page can then show **individual player impact** — how much each player raises or lowers the squad's win probability — rather than a single squad-level heuristic.
+4. Managers can identify their highest-impact players per opponent and optimise squad selection data-driven rather than by rating alone.
 
-1. Run `initialize` once with the intended statistics authority.
-2. Create one NFT mint per player using classic SPL Token for this MVP.
-3. Call `create_player` with that mint, player identity, initial stats, and metadata URI.
-4. Copy `target/idl/fifyard.json` into the frontend and add an Anchor client.
-5. Replace demo records with fetched Player PDA accounts and submit `create_squad` using each Player PDA/token-account pair as remaining accounts.
+### Further roadmap
+
+| Feature | Notes |
+|---|---|
+| Custom Anchor program for `create_squad` | Replaces Memo publishing; enforces ownership, formation, and rating on-chain |
+| NFT mints per player | SPL Token or Token-2022 mint linked to each Player PDA |
+| Real SOL marketplace | Peer-to-peer player transfers with royalty enforcement |
+| Match oracle | On-chain result authority feeding win/loss data back to Player PDAs |
+| Squad ELO history | Persistent per-wallet performance ledger across published squads |
+| Formation analytics | Aggregate win-rate heatmap by formation across all published teams on-chain |
+| Mobile-responsive layout | Sidebar collapses to bottom nav on small screens |
+| Compressed NFTs (cNFTs) | Drastically lower mint cost for a large player catalogue using Bubblegum |
+
+---
 
 ## Security and production gaps
 
-- This is unaudited MVP code and should not be used on mainnet as-is.
-- The current ownership check supports classic SPL Token accounts, not Token-2022 or compressed NFTs.
-- The statistics authority is a single key; use a multisig/oracle quorum in production.
-- Player identity, licensing, data-provider rights, transfer royalties, collection verification, and dispute handling need product/legal decisions.
+- This is **unaudited MVP code** and must not be used on mainnet as-is.
+- Player stats are static; they do not reflect real-world performance.
+- The statistics authority is a single keypair; use a multisig or oracle quorum in production.
+- Ownership checks currently use classic SPL Token accounts, not Token-2022 or compressed NFTs.
+- Player identity, licensing, data-provider rights, transfer royalties, collection verification, and dispute handling require product and legal decisions before any mainnet launch.
 - Add Anchor integration tests covering forged token accounts, duplicate players, incorrect mint ownership, formation edge cases, and authority rotation before deployment.
