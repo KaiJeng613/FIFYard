@@ -6,6 +6,43 @@ Live deployment: **[fifyard.vercel.app](https://fifyard.vercel.app)**
 
 ---
 
+## Origin — 5-hour sprint
+
+FIFYard was conceived and built in a single **5-hour focused sprint** on 20 June 2026.
+
+### The idea
+
+The starting point was a simple question: *what if a football manager's decisions — their formation choice, player selection, and squad composition — were verifiable on-chain?* Traditional football games keep all of this data centralised and opaque. FIFYard flips that: every squad published is a permanent, inspectable record on Solana devnet, tied to the manager's wallet address.
+
+The scope was intentionally tight for the sprint:
+
+- A **player catalogue** with real statistical attributes (pace, shooting, passing, dribbling, defending, stamina) modelled on World Cup and club data
+- A **prediction model** that takes squad rating, formation validity, and opponent strength as inputs and outputs a win/draw/loss probability — explainable by design, not a black box
+- An **on-chain publishing flow** using Phantom wallet so every squad decision has a transaction signature as proof
+- A **player market** where managers can shortlist and purchase players, with the receipt recorded permanently on-chain
+
+### How the 5 hours were spent
+
+| Hour | Focus |
+|---|---|
+| 0–1 | Project structure, Vite + React + TypeScript scaffold, Solana.js integration, Phantom wallet connection, Memo program publish flow |
+| 1–2 | Player data model (27 players, 6 stats each, position-weighted OVR formula), formation validation logic (4-3-3, 4-4-2, 3-5-2, 4-2-3-1), pitch grid layout |
+| 2–3 | Win rate prediction model (ELO-inspired, squad OVR vs opponent rating, draw probability curve), Predictions page with matchup cards, formation style analysis tags |
+| 3–4 | Players Market page — sortable table, shortlist (on-chain Memo), real SOL purchase (SystemProgram.transfer + Memo receipt in one atomic tx), player detail panel |
+| 4–5 | RPC fallback and 429 handling, hash-based URL routing (`#squad` / `#players` / `#predictions`), balance display, formation auto-adjustment on switch, UI polish |
+
+### Key technical decisions made under time pressure
+
+**Memo program over a custom Anchor program** — Writing, compiling, and deploying a custom Solana program takes hours even for experienced developers. The Memo program is already deployed on every cluster and accepts arbitrary UTF-8 payloads. By structuring the JSON carefully (`app:"FIFYard"`, `v:1`, `type` discriminator), all published squads, shortlists, and purchase receipts are permanently on-chain and fully parseable without any custom IDL.
+
+**Heuristic prediction model over ML** — Training a model requires historical match data, feature engineering, and validation pipelines — none of which exist in a 5-hour window. Instead the model uses an ELO-inspired expected-score formula: `P(win) = 1 / (1 + 10^((opponentRating - squadRating) / 12))` with a dynamic draw probability that narrows as the rating gap widens. This is explainable (every output has a plain-English reason), deterministic (same inputs always produce the same output), and fast (no network call needed).
+
+**Position-weighted OVR** — Rather than a flat average, each position uses a different stat weighting: GK weights defending and stamina heavily; FWD weights shooting and pace; MID balances passing, dribbling, and stamina. This makes OVR meaningful per position rather than a number that mixes goalkeeper reflexes with striker finishing.
+
+**In-memory RPC cache** — The biggest devnet reliability challenge is the 429 rate limit on `api.devnet.solana.com`. Fetching 50 transaction signatures and parsing each for Memo data would make up to 51 RPC calls on every wallet connect. Adding an in-memory cache keyed by wallet address cuts this to a single fetch per session, with cache invalidation on publish so fresh data is always visible.
+
+---
+
 ## Pages
 
 ### 01 / Team Studio — `/#squad`
