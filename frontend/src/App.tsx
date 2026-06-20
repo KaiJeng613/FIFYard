@@ -3,7 +3,7 @@ import { Sidebar } from './components/Sidebar'
 import { WalletButton } from './components/WalletButton'
 import { PredictionsPage, type PublishedTeam } from './components/PredictionsPage'
 import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
-import { fetchEpoch, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
+import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
 import { players, type Player, type Position } from './players'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -88,6 +88,19 @@ export function App() {
       setWallet(provider.publicKey.toString())
     }
   }, [])
+
+  // Fetch teams from blockchain when wallet connects
+  useEffect(() => {
+    if (wallet) {
+      fetchPublishedTeams(wallet).then((onChainTeams) => {
+        setPublishedTeams(() => {
+          // Merge on-chain teams with local storage, prefer on-chain
+          try { localStorage.setItem('fifyard-teams', JSON.stringify(onChainTeams)) } catch { /* ignore */ }
+          return onChainTeams
+        })
+      }).catch(console.error)
+    }
+  }, [wallet])
 
   // ── Publish state ─────────────────────────────────────────────────────────
   const [teamName, setTeamName] = useState('My Team')
@@ -321,6 +334,14 @@ export function App() {
                         placeholder="My Team"
                       />
                     </div>
+                    {/* Validation display */}
+                    {!fullLineupValid && selected.length > 0 && (
+                      <div className="lineup-validation">
+                        Need: GK {expected.GK}, DEF {expected.DEF}, MID {expected.MID}, FWD {expected.FWD}
+                        <br />
+                        Have: GK {positionCounts.GK}, DEF {positionCounts.DEF}, MID {positionCounts.MID}, FWD {positionCounts.FWD}
+                      </div>
+                    )}
                     <button
                       className="submit-xi-btn"
                       disabled={!wallet || !fullLineupValid || publishing}

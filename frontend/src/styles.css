@@ -108,7 +108,7 @@ main { overflow: hidden; }
 .submit-xi-btn:disabled { filter: grayscale(1); opacity: .4; cursor: not-allowed; }
 .wallet-error { color: #ff9f89; font: 10px 'DM Mono'; margin: 0 18px 10px; }
 .publish-success { color: #7bd68e; font: 500 10px 'DM Mono'; margin: 0 18px 10px; }
-.publish-success a { color: var(--lime); text-decoration: underline; }
+.lineup-validation { grid-column: 1 / -1; color: #ff9f89; font: 500 9px 'DM Mono'; margin-top: 8px; }
 
 /* ── Stat panel ── */
 .stat-panel { border-left: 1px solid var(--line); padding: 22px; position: relative; }
