@@ -9,6 +9,30 @@ import { players, type Player, type Position } from './players'
 
 type Page = 'squad' | 'players' | 'predictions'
 
+const VALID_PAGES: Page[] = ['squad', 'players', 'predictions']
+
+function hashToPage(): Page {
+  const hash = window.location.hash.replace('#', '') as Page
+  return VALID_PAGES.includes(hash) ? hash : 'squad'
+}
+
+function usePage(): [Page, (p: Page) => void] {
+  const [page, setPageState] = useState<Page>(hashToPage)
+
+  useEffect(() => {
+    function onHashChange() { setPageState(hashToPage()) }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  function setPage(p: Page) {
+    window.location.hash = p
+    setPageState(p)
+  }
+
+  return [page, setPage]
+}
+
 const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
 type SlotPos = { row: number; col: number; colSpan?: number }
@@ -42,7 +66,7 @@ const formationSlots: Record<Formation, SlotPos[]> = {
 }
 
 export function App() {
-  const [page, setPage] = useState<Page>('squad')
+  const [page, setPage] = usePage()
 
   const [formation, setFormation] = useState<Formation>('4-3-3')
   const [filter, setFilter] = useState<(typeof filters)[number]>('ALL')
