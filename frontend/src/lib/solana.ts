@@ -1,15 +1,14 @@
 import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
-// RPC endpoints - try multiple for reliability
+// All devnet RPC endpoints - NO testnet/mainnet
 const RPC_ENDPOINTS = [
   'https://api.devnet.solana.com',
-  'https://rpc.devnet.sonic.game',
-  'https://solana-devnet.g.alchemy.com/v2/demo',
+  'https://devnet.helius-rpc.com',
+  'https://rpc-devnet.solana.com',
   clusterApiUrl('devnet'),
 ]
 
-// Create connection with fallback
 let connection = new Connection(RPC_ENDPOINTS[0], 'confirmed')
 let currentRpcIndex = 0
 
@@ -29,7 +28,6 @@ export type TeamSnapshot = {
   squadRating: number
 }
 
-/** Type for published team data returned from on-chain */
 export type OnChainTeam = {
   id: string
   name: string
@@ -55,12 +53,12 @@ export function solscanProgramUrl() {
   return `https://solscan.io/account/${programId.toBase58()}?cluster=devnet`
 }
 
-/** Fetch the current Solana devnet epoch number. Returns null on failure. */
 export async function fetchEpoch(): Promise<number | null> {
   try {
     const info = await connection.getEpochInfo()
     return info.epoch
   } catch (err) {
+    console.error('Epoch fetch error:', err)
     if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
       currentRpcIndex++
       connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
@@ -70,12 +68,12 @@ export async function fetchEpoch(): Promise<number | null> {
   }
 }
 
-/** Fetch SOL balance for an address. Returns lamports. */
 export async function fetchBalance(address: string): Promise<number> {
   try {
     const lamports = await connection.getBalance(new PublicKey(address))
     return lamports
   } catch (err) {
+    console.error('Balance fetch error:', err)
     if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
       currentRpcIndex++
       connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
@@ -85,19 +83,18 @@ export async function fetchBalance(address: string): Promise<number> {
   }
 }
 
-/** Check if Phantom is on devnet network */
 export function isPhantomOnDevnet(): boolean {
   const provider = phantomProvider()
   return provider?.network === 'devnet' || !provider?.network
 }
 
-/** Retry with exponential backoff for rate-limited RPC calls */
 async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
+      console.error(`RPC error (attempt ${i + 1}):`, msg)
       if (msg.includes('429') || msg.includes('rate limit')) {
         if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
           currentRpcIndex++
@@ -112,12 +109,12 @@ async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): P
   throw new Error('Max retries exceeded')
 }
 
-/** Fetch all FIFYard team snapshots from a wallet's Memo transactions */
 export async function fetchPublishedTeams(walletAddress: string): Promise<OnChainTeam[]> {
   const pubKey = new PublicKey(walletAddress)
+  console.log('Fetching teams for:', pubKey.toBase58())
 
-  // Get all transaction signatures for this wallet
   const sigs = await retryRpc(() => connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }))
+  console.log('Found signatures:', sigs.length)
 
   const teams: OnChainTeam[] = []
 
@@ -127,26 +124,31 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
       const tx = await retryRpc(() => connection.getTransaction(sig))
       if (!tx || !tx.transaction) continue
 
-      // Parse transaction message for memo instructions
       const msg = tx.transaction.message
-      // Handle both legacy and versioned transactions
       const isLegacy = !('version' in msg) || msg.version === undefined
 
-      if (!isLegacy) continue // Skip versioned transactions for simplicity
+      if (!isLegacy) {
+        console.log('Skipping versioned transaction:', sig)
+        continue
+      }
 
-      // Legacy transaction structure
       const accountKeys = (msg as { accountKeys: PublicKey[] }).accountKeys
       const compiledIx = (msg as { instructions: { programIdIndex: number; data: string }[] }).instructions
 
-      // Find Memo instruction (skip ComputeBudget/SetComputeUnitPrice - they come first)
+      console.log(`Transaction ${sig}: ${compiledIx.length} instructions`)
+
+      // Find Memo instruction
       const memoIx = compiledIx.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
       if (!memoIx?.data) continue
 
       // Decode base64 memo data
       const decoded = Buffer.from(memoIx.data, 'base64').toString('utf8')
+      console.log('Memo data:', decoded)
+
       const json = JSON.parse(decoded)
 
       if (json.app === 'FIFYard' && json.v === 1) {
+        console.log('Found FIFYard team:', json)
         teams.push({
           id: sig,
           name: json.name || 'My Team',
@@ -159,11 +161,12 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
           txUrl: solscanTransactionUrl(sig),
         })
       }
-    } catch {
-      // Skip failed transactions
+    } catch (err) {
+      console.error(`Failed to parse tx ${sig}:`, err)
     }
   }
 
+  console.log('Total teams found:', teams.length)
   return teams
 }
 
@@ -171,7 +174,6 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
   const provider = phantomProvider()
   if (!provider) throw new Error('Phantom is not installed')
 
-  // Check Phantom's network — must be devnet
   if (provider.network && provider.network !== 'devnet') {
     throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
   }
@@ -185,7 +187,6 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
     data: Buffer.from(message, 'utf8'),
   }))
 
-  // Retry RPC calls for rate limiting
   const { blockhash, lastValidBlockHeight } = await retryRpc(() => connection.getLatestBlockhash('confirmed'))
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
