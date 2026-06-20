@@ -8,6 +8,8 @@ export type PublishedTeam = {
   formation: Formation
   playerIds: number[]
   squadRating: number
+  opponent: string
+  winRate: number
   publishedAt: number
   txUrl: string | null
 }

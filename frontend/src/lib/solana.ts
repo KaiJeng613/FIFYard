@@ -102,18 +102,20 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
 
       // Parse transaction message for memo instructions
       const msg = tx.transaction.message
+      // Handle both legacy and versioned transactions
       const isLegacy = !('version' in msg) || msg.version === undefined
 
       if (!isLegacy) continue // Skip versioned transactions for simplicity
 
-      const instructions = (msg as { instructions: { programIdIndex: number; data?: Buffer[] }[] }).instructions
       const accountKeys = (msg as { accountKeys: PublicKey[] }).accountKeys
+      const compiledIx = (msg as { instructions: { programIdIndex: number; data: string }[] }).instructions
 
-      const memoIx = instructions.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
-      if (!memoIx?.data?.[0]) continue
+      const memoIx = compiledIx.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
+      if (!memoIx?.data) continue
 
-      const data = Buffer.from(memoIx.data[0], 'base64').toString('utf8')
-      const json = JSON.parse(data)
+      // Decode base64 memo data - it's a string in CompiledInstruction
+      const decoded = Buffer.from(memoIx.data, 'base64').toString('utf8')
+      const json = JSON.parse(decoded)
 
       if (json.app === 'FIFYard' && json.v === 1) {
         teams.push({
