@@ -1,6 +1,7 @@
 import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
+// Create connection to devnet RPC
 export const connection = new Connection(clusterApiUrl('devnet'), 'confirmed')
 export const programId = new PublicKey('6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKnfujB')
 const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
@@ -47,6 +48,12 @@ export async function fetchBalance(address: string): Promise<number> {
   }
 }
 
+/** Check if Phantom is on devnet network */
+export function isPhantomOnDevnet(): boolean {
+  const provider = phantomProvider()
+  return provider?.network === 'devnet' || !provider?.network
+}
+
 export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot): Promise<string> {
   const provider = phantomProvider()
   if (!provider) throw new Error('Phantom is not installed')
@@ -65,7 +72,6 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
     data: Buffer.from(message, 'utf8'),
   }))
 
-  // Ensure the connection is to devnet
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash

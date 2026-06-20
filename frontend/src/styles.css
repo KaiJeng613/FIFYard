@@ -48,6 +48,7 @@ a { color: inherit; text-decoration: none; }
 .wallet-dropdown-divider { height: 1px; background: #1e3428; margin: 2px 0; }
 .wallet-disconnect { color: #e87a6a !important; }
 .wallet-disconnect:hover { background: #2a1510 !important; }
+.wallet-network-warning { display: flex; align-items: center; gap: 6px; padding: 8px 14px; color: #ff9f89; font: 500 9px 'DM Mono'; border-bottom: 1px solid #3e2420; background: #2a1510; }
 
 /* ── Workspace / Squad builder ── */
 main { overflow: hidden; }

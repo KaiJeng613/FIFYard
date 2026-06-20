@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ExternalLink, History, LogOut, Settings, WalletCards } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ExternalLink, History, LogOut, Settings, WalletCards } from 'lucide-react'
 import { fetchBalance, phantomProvider, solscanProgramUrl } from '../lib/solana'
 
 interface WalletButtonProps {
@@ -21,15 +21,19 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   const [balance, setBalance] = useState<number | null>(null)
+  const [network, setNetwork] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Fetch balance when wallet is connected
+  // Fetch balance and network when wallet is connected
   useEffect(() => {
     if (!wallet) {
       setBalance(null)
+      setNetwork(null)
       return
     }
     fetchBalance(wallet).then(setBalance)
+    const p = phantomProvider()
+    setNetwork(p?.network ?? null)
   }, [wallet])
 
   useEffect(() => {
@@ -98,6 +102,11 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
         <div className="wallet-dropdown">
           <div className="wallet-dropdown-address">{wallet}</div>
           <div className="wallet-balance">Balance: {balance !== null ? `${formatSOL(balance)} SOL` : 'Loading…'}</div>
+          {network && network !== 'devnet' && (
+            <span className="wallet-network-warning">
+              <AlertTriangle size={12} /> Wrong network: {network}. Switch to Devnet in Phantom.
+            </span>
+          )}
           <button onClick={() => setOpen(false)}>
             <Settings size={14} /> Settings
           </button>
