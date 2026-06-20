@@ -35,7 +35,12 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       return
     }
     try {
-      const result = await provider.connect()
+      // If already connected but we're re-connecting, force wallet selector
+      if (provider.publicKey) {
+        await provider.disconnect()
+        delete window.phantom?.solana
+      }
+      const result = await provider.connect({ onlyTrusted: false })
       onConnected(result.publicKey.toString())
     } catch {
       setError('Connection cancelled.')
@@ -46,6 +51,10 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
     setOpen(false)
     const provider = phantomProvider()
     try { await provider?.disconnect() } catch { /* ignore */ }
+    // Clear Phantom's internal state to force fresh connect on next click
+    if (window.phantom?.solana) {
+      delete window.phantom.solana
+    }
     onDisconnected()
   }
 
