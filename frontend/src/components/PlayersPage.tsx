@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Star, StarOff, ShoppingCart, X, ChevronUp, ChevronDown, Search } from 'lucide-react'
+import { Star, StarOff, ShoppingCart, X, ChevronUp, ChevronDown, Search, ExternalLink, Loader } from 'lucide-react'
 import { players, type Player, type Position } from '../players'
+import { purchasePlayer } from '../lib/solana'
 
 type SortKey = 'overall' | 'pace' | 'shooting' | 'passing' | 'dribbling' | 'defending' | 'stamina' | 'floor'
 type FilterPos = 'ALL' | Position
@@ -13,15 +14,21 @@ interface PlayersPageProps {
   saving: boolean
 }
 
+type PurchaseState =
+  | { status: 'idle' }
+  | { status: 'pending' }
+  | { status: 'success'; txUrl: string }
+  | { status: 'error'; message: string }
+
 const statLabels: { key: SortKey; label: string }[] = [
-  { key: 'overall', label: 'OVR' },
-  { key: 'pace', label: 'PAC' },
-  { key: 'shooting', label: 'SHO' },
-  { key: 'passing', label: 'PAS' },
-  { key: 'dribbling', label: 'DRI' },
-  { key: 'defending', label: 'DEF' },
-  { key: 'stamina', label: 'STA' },
-  { key: 'floor', label: 'VALUE' },
+  { key: 'overall',   label: 'OVR'   },
+  { key: 'pace',      label: 'PAC'   },
+  { key: 'shooting',  label: 'SHO'   },
+  { key: 'passing',   label: 'PAS'   },
+  { key: 'dribbling', label: 'DRI'   },
+  { key: 'defending', label: 'DEF'   },
+  { key: 'stamina',   label: 'STA'   },
+  { key: 'floor',     label: 'PRICE' },
 ]
 
 const posFilters: FilterPos[] = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
@@ -40,13 +47,18 @@ function StatBar({ value, max = 100 }: { value: number; max?: number }) {
   )
 }
 
-function PlayerDetailPanel({ player, shortlisted, onToggleShortlist, onPurchase, wallet }: {
+function PlayerDetailPanel({ player, shortlisted, purchaseState, onToggleShortlist, onPurchase, wallet }: {
   player: Player
   shortlisted: boolean
+  purchaseState: PurchaseState
   onToggleShortlist: () => void
   onPurchase: () => void
   wallet: string | null
 }) {
+  const isPending  = purchaseState.status === 'pending'
+  const isSuccess  = purchaseState.status === 'success'
+  const isError    = purchaseState.status === 'error'
+
   return (
     <div className="pp-detail">
       <div className="pp-detail-accent" style={{ background: `linear-gradient(135deg, ${player.accent}22 0%, transparent 60%)` }} />
@@ -74,22 +86,36 @@ function PlayerDetailPanel({ player, shortlisted, onToggleShortlist, onPurchase,
         <button
           className={`pp-shortlist-btn ${shortlisted ? 'active' : ''}`}
           onClick={onToggleShortlist}
+          disabled={isPending}
           title={shortlisted ? 'Remove from shortlist' : 'Add to shortlist'}
         >
           {shortlisted ? <StarOff size={14} /> : <Star size={14} />}
           {shortlisted ? 'Remove' : 'Shortlist'}
         </button>
+
         <button
-          className="pp-buy-btn"
-          disabled={!wallet}
+          className={`pp-buy-btn ${isSuccess ? 'owned' : ''}`}
+          disabled={!wallet || isPending || isSuccess}
           onClick={onPurchase}
-          title={wallet ? `Purchase for ${player.floor} SOL` : 'Connect wallet to purchase'}
+          title={!wallet ? 'Connect wallet to purchase' : isSuccess ? 'Already purchased' : `Buy for ${player.floor} SOL`}
         >
-          <ShoppingCart size={14} />
-          {wallet ? `Buy · ${player.floor} SOL` : 'Connect wallet'}
+          {isPending
+            ? <><Loader size={14} className="pp-spin" /> Confirming…</>
+            : isSuccess
+            ? <>✓ Purchased</>
+            : <><ShoppingCart size={14} /> {wallet ? `Buy · ${player.floor} SOL` : 'Connect wallet'}</>
+          }
         </button>
       </div>
 
+      {isSuccess && purchaseState.status === 'success' && (
+        <a className="pp-tx-success" href={purchaseState.txUrl} target="_blank" rel="noreferrer">
+          View purchase on Solscan <ExternalLink size={11} />
+        </a>
+      )}
+      {isError && purchaseState.status === 'error' && (
+        <p className="pp-tx-error">{purchaseState.message}</p>
+      )}
       {!wallet && (
         <p className="pp-detail-note">Connect your wallet to purchase players and sync your shortlist on-chain.</p>
       )}
@@ -98,16 +124,23 @@ function PlayerDetailPanel({ player, shortlisted, onToggleShortlist, onPurchase,
 }
 
 export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortlist, saving }: PlayersPageProps) {
-  const [posFilter, setPosFilter] = useState<FilterPos>('ALL')
-  const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('overall')
-  const [sortAsc, setSortAsc] = useState(false)
+  const [posFilter, setPosFilter]   = useState<FilterPos>('ALL')
+  const [search, setSearch]         = useState('')
+  const [sortKey, setSortKey]       = useState<SortKey>('overall')
+  const [sortAsc, setSortAsc]       = useState(false)
   const [selectedId, setSelectedId] = useState<number>(players[0].id)
-  const [tab, setTab] = useState<'all' | 'shortlist'>('all')
-  const [purchasedIds, setPurchasedIds] = useState<number[]>([])
+  const [tab, setTab]               = useState<'all' | 'shortlist'>('all')
 
-  const selectedPlayer = players.find(p => p.id === selectedId) ?? players[0]
-  const shortlisted = shortlist.includes(selectedId)
+  // per-player purchase states keyed by player id
+  const [purchaseStates, setPurchaseStates] = useState<Record<number, PurchaseState>>({})
+
+  const selectedPlayer  = players.find(p => p.id === selectedId) ?? players[0]
+  const shortlisted     = shortlist.includes(selectedId)
+  const currentPurchase = purchaseStates[selectedId] ?? { status: 'idle' }
+
+  function setPurchase(id: number, state: PurchaseState) {
+    setPurchaseStates(prev => ({ ...prev, [id]: state }))
+  }
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortAsc(a => !a)
@@ -115,16 +148,26 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
   }
 
   function toggleShortlist(id: number) {
-    const next = shortlist.includes(id) ? shortlist.filter(x => x !== id) : [...shortlist, id]
+    const next = shortlist.includes(id)
+      ? shortlist.filter(x => x !== id)
+      : [...shortlist, id]
     onShortlistChange(next)
   }
 
-  function handlePurchase() {
-    if (!wallet || purchasedIds.includes(selectedId)) return
-    setPurchasedIds(prev => [...prev, selectedId])
-    // Optimistically shortlist the purchased player too
-    if (!shortlist.includes(selectedId)) {
-      onShortlistChange([...shortlist, selectedId])
+  async function handlePurchase() {
+    if (!wallet) return
+    const p = selectedPlayer
+    if (purchaseStates[p.id]?.status === 'success') return
+
+    setPurchase(p.id, { status: 'pending' })
+    try {
+      const result = await purchasePlayer(wallet, p.id, p.name, p.floor)
+      setPurchase(p.id, { status: 'success', txUrl: result.txUrl })
+      // Auto-shortlist on purchase
+      if (!shortlist.includes(p.id)) onShortlistChange([...shortlist, p.id])
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setPurchase(p.id, { status: 'error', message: msg })
     }
   }
 
@@ -134,7 +177,11 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
 
   const filtered = baseList
     .filter(p => posFilter === 'ALL' || p.position === posFilter)
-    .filter(p => search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.shortName.toLowerCase().includes(search.toLowerCase()))
+    .filter(p =>
+      search === '' ||
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.shortName.toLowerCase().includes(search.toLowerCase())
+    )
     .sort((a, b) => {
       const diff = statValue(a, sortKey) - statValue(b, sortKey)
       return sortAsc ? diff : -diff
@@ -163,9 +210,8 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
       </div>
 
       <div className="pp-layout">
-        {/* Left: list */}
+        {/* ── Left: player list ── */}
         <div className="pp-list-panel">
-          {/* Tabs */}
           <div className="pp-tabs">
             <button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>All Players</button>
             <button className={tab === 'shortlist' ? 'active' : ''} onClick={() => setTab('shortlist')}>
@@ -173,7 +219,6 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
             </button>
           </div>
 
-          {/* Search + position filter */}
           <div className="pp-list-controls">
             <div className="pp-search-wrap">
               <Search size={13} />
@@ -183,7 +228,11 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
-              {search && <button className="pp-search-clear" onClick={() => setSearch('')}><X size={12} /></button>}
+              {search && (
+                <button className="pp-search-clear" onClick={() => setSearch('')}>
+                  <X size={12} />
+                </button>
+              )}
             </div>
             <div className="pp-pos-filters">
               {posFilters.map(pos => (
@@ -196,11 +245,14 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
             </div>
           </div>
 
-          {/* Table header (sortable) */}
           <div className="pp-table-header">
             <span className="pp-col-player">Player</span>
             {statLabels.map(({ key, label }) => (
-              <button key={key} className={`pp-col-stat ${sortKey === key ? 'sort-active' : ''}`} onClick={() => handleSort(key)}>
+              <button
+                key={key}
+                className={`pp-col-stat ${sortKey === key ? 'sort-active' : ''}`}
+                onClick={() => handleSort(key)}
+              >
                 {label}
                 {sortKey === key ? (sortAsc ? <ChevronUp size={10} /> : <ChevronDown size={10} />) : null}
               </button>
@@ -208,18 +260,19 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
             <span className="pp-col-action" />
           </div>
 
-          {/* Player rows */}
           <div className="pp-table-body">
             {filtered.length === 0 && (
               <div className="pp-empty">No players match your filter.</div>
             )}
             {filtered.map(p => {
               const isShortlisted = shortlist.includes(p.id)
-              const isPurchased = purchasedIds.includes(p.id)
+              const ps = purchaseStates[p.id]
+              const isOwned = ps?.status === 'success'
+              const isBuying = ps?.status === 'pending'
               return (
                 <button
                   key={p.id}
-                  className={`pp-row ${selectedId === p.id ? 'selected' : ''} ${isShortlisted ? 'shortlisted' : ''}`}
+                  className={`pp-row ${selectedId === p.id ? 'selected' : ''} ${isShortlisted ? 'shortlisted' : ''} ${isOwned ? 'owned' : ''}`}
                   onClick={() => setSelectedId(p.id)}
                 >
                   <span className="pp-col-player">
@@ -229,11 +282,12 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
                       <small>{p.club} · {p.country}</small>
                     </span>
                     <span className={`pp-row-pos pp-pos-${p.position.toLowerCase()}`}>{p.position}</span>
-                    {isPurchased && <span className="pp-owned-badge">OWNED</span>}
+                    {isOwned  && <span className="pp-owned-badge">OWNED</span>}
+                    {isBuying && <span className="pp-owned-badge pp-buying-badge">BUYING…</span>}
                   </span>
                   {statLabels.map(({ key }) => (
                     <span key={key} className="pp-col-stat">
-                      {key === 'floor' ? `${statValue(p, key)}` : statValue(p, key)}
+                      {key === 'floor' ? `${statValue(p, key)}◎` : statValue(p, key)}
                     </span>
                   ))}
                   <span className="pp-col-action">
@@ -251,10 +305,11 @@ export function PlayersPage({ wallet, shortlist, onShortlistChange, onSaveShortl
           </div>
         </div>
 
-        {/* Right: detail panel */}
+        {/* ── Right: detail panel ── */}
         <PlayerDetailPanel
           player={selectedPlayer}
           shortlisted={shortlisted}
+          purchaseState={currentPurchase}
           onToggleShortlist={() => toggleShortlist(selectedId)}
           onPurchase={handlePurchase}
           wallet={wallet}

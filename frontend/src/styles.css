@@ -313,6 +313,14 @@ main { overflow: hidden; }
 .pp-buy-btn:hover:not(:disabled) { filter: brightness(1.1); }
 .pp-buy-btn:disabled { filter: grayscale(1); opacity: .4; cursor: not-allowed; }
 .pp-detail-note { margin: 14px 0 0; font: 400 10px/1.6 'DM Mono'; color: #3a5a46; }
+.pp-buy-btn.owned { background: #1a3020; color: var(--lime); border: 1px solid #2e5038; cursor: default; }
+.pp-tx-success { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font: 500 11px 'DM Mono'; color: var(--lime); text-decoration: none; }
+.pp-tx-success:hover { text-decoration: underline; }
+.pp-tx-error { margin: 12px 0 0; font: 400 10px/1.5 'DM Mono'; color: #e87a6a; }
+.pp-buying-badge { background: #2a2010; color: #f5c842; }
+.pp-row.owned { box-shadow: inset 2px 0 #5bb1de; }
+@keyframes pp-spin { to { transform: rotate(360deg); } }
+.pp-spin { animation: pp-spin .8s linear infinite; }
 
 /* ── Protocol section ── */
 .protocol { padding: 90px 4vw; border-top: 1px solid var(--line); }

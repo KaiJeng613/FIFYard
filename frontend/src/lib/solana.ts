@@ -1,4 +1,4 @@
-import { clusterApiUrl, Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
+import { clusterApiUrl, Connection, PublicKey, SystemProgram, LAMPORTS_PER_SOL, Transaction, TransactionInstruction } from '@solana/web3.js'
 import type { Formation } from './prediction'
 
 // All devnet RPC endpoints
@@ -257,6 +257,94 @@ export async function publishShortlist(ownerAddress: string, playerIds: number[]
   } catch { /* timeout — tx may still land */ }
 
   return signature
+}
+
+// ── Player purchase (SOL transfer + Memo receipt) ────────────────────────────
+
+/** Treasury wallet that receives purchase payments on devnet. */
+const TREASURY = new PublicKey('A1czGAnFQZX3zpRjXWCSmyrb9FZMqeutoMRnpnPjBe7N')
+
+export type PurchaseResult = {
+  signature: string
+  txUrl: string
+}
+
+/**
+ * Purchase a player by sending `priceSOL` to the treasury and writing a Memo
+ * receipt — both in a single atomic transaction signed by Phantom.
+ */
+export async function purchasePlayer(
+  buyerAddress: string,
+  playerId: number,
+  playerName: string,
+  priceSOL: number,
+): Promise<PurchaseResult> {
+  const provider = phantomProvider()
+  if (!provider) throw new Error('Phantom is not installed')
+  if (provider.network && provider.network !== 'devnet') {
+    throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
+  }
+
+  const buyer = new PublicKey(buyerAddress)
+  const lamports = Math.round(priceSOL * LAMPORTS_PER_SOL)
+
+  const memo = JSON.stringify({
+    app: 'FIFYard',
+    v: 1,
+    type: 'purchase',
+    playerId,
+    playerName,
+    priceSOL,
+    buyer: buyerAddress,
+    ts: Date.now(),
+  })
+
+  const transaction = new Transaction()
+    .add(
+      // Real SOL transfer to treasury
+      SystemProgram.transfer({
+        fromPubkey: buyer,
+        toPubkey: TREASURY,
+        lamports,
+      }),
+    )
+    .add(
+      // On-chain purchase receipt via Memo
+      new TransactionInstruction({
+        programId: memoProgramId,
+        keys: [{ pubkey: buyer, isSigner: true, isWritable: false }],
+        data: Buffer.from(memo, 'utf8'),
+      }),
+    )
+
+  let blockhashResult
+  try {
+    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
+  } catch {
+    await switchRpc()
+    return purchasePlayer(buyerAddress, playerId, playerName, priceSOL)
+  }
+
+  const { blockhash, lastValidBlockHeight } = blockhashResult
+  transaction.feePayer = buyer
+  transaction.recentBlockhash = blockhash
+
+  console.log(`Purchasing player ${playerName} (id=${playerId}) for ${priceSOL} SOL`)
+  const result = await provider.signAndSendTransaction(transaction)
+  const signature = typeof result === 'string' ? result : result.signature
+  console.log('Purchase tx sent:', signature)
+
+  try {
+    await withTimeout(
+      connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
+      30000,
+      'confirmPurchase',
+    )
+  } catch {
+    console.warn('Confirm timeout — purchase may still land')
+  }
+
+  return { signature, txUrl: solscanTransactionUrl(signature) }
 }
 
 /** Fetch the most recent shortlist for a wallet from on-chain Memo transactions. */
