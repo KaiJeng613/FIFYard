@@ -9,12 +9,11 @@ import {
 import type { Formation } from './prediction'
 
 // ── RPC endpoints ─────────────────────────────────────────────────────────────
-// Three genuinely different devnet endpoints. We rotate through them on any
-// failure so a 429 on one doesn't block the whole flow.
+// Helius devnet RPC is fast, reliable, and has generous rate limits.
+// api.devnet.solana.com is kept as backup only.
 const RPC_ENDPOINTS = [
+  `https://devnet.helius-rpc.com/?api-key=27b54966-770f-4c17-bf13-4de8fe20d584`,
   'https://api.devnet.solana.com',
-  'https://rpc.ankr.com/solana_devnet',
-  'https://solana-devnet.rpc.extrnode.com',
 ]
 
 function makeConnection(url: string) {
