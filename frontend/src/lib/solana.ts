@@ -41,8 +41,22 @@ export type OnChainTeam = {
 }
 
 export function phantomProvider() {
-  const provider = window.phantom?.solana
+  // Check both window.phantom.solana (Phantom extension) and window.solana (legacy)
+  const provider = window.phantom?.solana ?? window.solana
   return provider?.isPhantom ? provider : undefined
+}
+
+/**
+ * Returns the Phantom provider or throws a user-facing error.
+ * Only blocks if the wallet is explicitly on mainnet-beta — undefined/devnet are fine.
+ */
+function assertPhantom() {
+  const provider = phantomProvider()
+  if (!provider) throw new Error('Phantom wallet not found. Make sure it is installed and the page is not in a disconnected state.')
+  if (provider.network === 'mainnet-beta') {
+    throw new Error('Phantom is on Mainnet. Switch to Devnet in Phantom → Settings → Developer Settings.')
+  }
+  return provider
 }
 
 export function solscanTransactionUrl(signature: string) {
@@ -167,40 +181,33 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
   return teams
 }
 
-export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot): Promise<string> {
-  const provider = phantomProvider()
-  if (!provider) throw new Error('Phantom is not installed')
+// ── Shared blockhash helper ───────────────────────────────────────────────────
 
-  if (provider.network && provider.network !== 'devnet') {
-    throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
+/**
+ * Fetch the latest blockhash, trying every RPC endpoint once before giving up.
+ * Does NOT recurse into callers — throws if all endpoints fail.
+ */
+async function getBlockhash() {
+  for (let attempt = 0; attempt < RPC_ENDPOINTS.length; attempt++) {
+    try {
+      return await withTimeout(connection.getLatestBlockhash('confirmed'), 6000, 'getLatestBlockhash')
+    } catch (err) {
+      console.warn(`Blockhash attempt ${attempt + 1} failed:`, err)
+      await switchRpc()
+    }
   }
+  throw new Error('All RPC endpoints failed to return a blockhash. Check your network connection.')
+}
 
-  const owner = new PublicKey(ownerAddress)
-
-  const message = JSON.stringify({ app: 'FIFYard', v: 1, ...snapshot })
-  const transaction = new Transaction().add(new TransactionInstruction({
-    programId: memoProgramId,
-    keys: [{ pubkey: owner, isSigner: true, isWritable: false }],
-    data: Buffer.from(message, 'utf8'),
-  }))
-
-  let blockhashResult
-  try {
-    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
-  } catch (err) {
-    console.error('Blockhash fetch error:', err)
-    await switchRpc()
-    return publishTeamSnapshot(ownerAddress, snapshot)
-  }
-  const { blockhash, lastValidBlockHeight } = blockhashResult
-
-  transaction.feePayer = owner
-  transaction.recentBlockhash = blockhash
-
-  console.log('Publishing to devnet via Memo program, fee payer:', owner.toBase58())
+async function signAndConfirm(
+  provider: ReturnType<typeof assertPhantom>,
+  transaction: Transaction,
+  blockhash: string,
+  lastValidBlockHeight: number,
+): Promise<string> {
   const result = await provider.signAndSendTransaction(transaction)
   const signature = typeof result === 'string' ? result : result.signature
-  console.log('Transaction sent:', signature)
+  console.log('Tx sent:', signature)
 
   try {
     await withTimeout(
@@ -208,142 +215,86 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
       30000,
       'confirmTransaction',
     )
-  } catch (err) {
-    console.error('Confirm timeout (tx may still succeed):', err)
+  } catch {
+    // Timeout is non-fatal — the tx may still confirm on-chain
+    console.warn('Confirm timeout — tx may still land. Signature:', signature)
   }
 
-  console.log('Transaction confirmed:', signature)
   return signature
+}
+
+// ── Team publish ──────────────────────────────────────────────────────────────
+
+export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot): Promise<string> {
+  const provider = assertPhantom()
+  const owner = new PublicKey(ownerAddress)
+
+  const transaction = new Transaction().add(new TransactionInstruction({
+    programId: memoProgramId,
+    keys: [{ pubkey: owner, isSigner: true, isWritable: false }],
+    data: Buffer.from(JSON.stringify({ app: 'FIFYard', v: 1, ...snapshot }), 'utf8'),
+  }))
+
+  const { blockhash, lastValidBlockHeight } = await getBlockhash()
+  transaction.feePayer = owner
+  transaction.recentBlockhash = blockhash
+
+  console.log('Publishing team snapshot via Memo, fee payer:', owner.toBase58())
+  return signAndConfirm(provider, transaction, blockhash, lastValidBlockHeight)
 }
 
 // ── Shortlist (on-chain via Memo) ────────────────────────────────────────────
 
-/** Write the current shortlist player IDs to chain as a Memo transaction. */
 export async function publishShortlist(ownerAddress: string, playerIds: number[]): Promise<string> {
-  const provider = phantomProvider()
-  if (!provider) throw new Error('Phantom is not installed')
-  if (provider.network && provider.network !== 'devnet') {
-    throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
-  }
-
+  const provider = assertPhantom()
   const owner = new PublicKey(ownerAddress)
-  const message = JSON.stringify({ app: 'FIFYard', v: 1, type: 'shortlist', playerIds })
+
   const transaction = new Transaction().add(new TransactionInstruction({
     programId: memoProgramId,
     keys: [{ pubkey: owner, isSigner: true, isWritable: false }],
-    data: Buffer.from(message, 'utf8'),
+    data: Buffer.from(JSON.stringify({ app: 'FIFYard', v: 1, type: 'shortlist', playerIds }), 'utf8'),
   }))
 
-  let blockhashResult
-  try {
-    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
-  } catch (err) {
-    await switchRpc()
-    return publishShortlist(ownerAddress, playerIds)
-  }
-  const { blockhash, lastValidBlockHeight } = blockhashResult
+  const { blockhash, lastValidBlockHeight } = await getBlockhash()
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
 
-  const result = await provider.signAndSendTransaction(transaction)
-  const signature = typeof result === 'string' ? result : result.signature
-
-  try {
-    await withTimeout(
-      connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
-      30000,
-      'confirmTransaction',
-    )
-  } catch { /* timeout — tx may still land */ }
-
-  return signature
+  return signAndConfirm(provider, transaction, blockhash, lastValidBlockHeight)
 }
 
 // ── Player purchase (SOL transfer + Memo receipt) ────────────────────────────
 
-/** Treasury wallet that receives purchase payments on devnet. */
 const TREASURY = new PublicKey('A1czGAnFQZX3zpRjXWCSmyrb9FZMqeutoMRnpnPjBe7N')
 
-export type PurchaseResult = {
-  signature: string
-  txUrl: string
-}
+export type PurchaseResult = { signature: string; txUrl: string }
 
-/**
- * Purchase a player by sending `priceSOL` to the treasury and writing a Memo
- * receipt — both in a single atomic transaction signed by Phantom.
- */
 export async function purchasePlayer(
   buyerAddress: string,
   playerId: number,
   playerName: string,
   priceSOL: number,
 ): Promise<PurchaseResult> {
-  const provider = phantomProvider()
-  if (!provider) throw new Error('Phantom is not installed')
-  if (provider.network && provider.network !== 'devnet') {
-    throw new Error(`Wrong network: ${provider.network}. Switch Phantom to Devnet.`)
-  }
-
+  const provider = assertPhantom()
   const buyer = new PublicKey(buyerAddress)
   const lamports = Math.round(priceSOL * LAMPORTS_PER_SOL)
 
-  const memo = JSON.stringify({
-    app: 'FIFYard',
-    v: 1,
-    type: 'purchase',
-    playerId,
-    playerName,
-    priceSOL,
-    buyer: buyerAddress,
-    ts: Date.now(),
-  })
-
   const transaction = new Transaction()
-    .add(
-      // Real SOL transfer to treasury
-      SystemProgram.transfer({
-        fromPubkey: buyer,
-        toPubkey: TREASURY,
-        lamports,
-      }),
-    )
-    .add(
-      // On-chain purchase receipt via Memo
-      new TransactionInstruction({
-        programId: memoProgramId,
-        keys: [{ pubkey: buyer, isSigner: true, isWritable: false }],
-        data: Buffer.from(memo, 'utf8'),
-      }),
-    )
+    .add(SystemProgram.transfer({ fromPubkey: buyer, toPubkey: TREASURY, lamports }))
+    .add(new TransactionInstruction({
+      programId: memoProgramId,
+      keys: [{ pubkey: buyer, isSigner: true, isWritable: false }],
+      data: Buffer.from(
+        JSON.stringify({ app: 'FIFYard', v: 1, type: 'purchase', playerId, playerName, priceSOL, buyer: buyerAddress, ts: Date.now() }),
+        'utf8',
+      ),
+    }))
 
-  let blockhashResult
-  try {
-    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
-  } catch {
-    await switchRpc()
-    return purchasePlayer(buyerAddress, playerId, playerName, priceSOL)
-  }
-
-  const { blockhash, lastValidBlockHeight } = blockhashResult
+  const { blockhash, lastValidBlockHeight } = await getBlockhash()
   transaction.feePayer = buyer
   transaction.recentBlockhash = blockhash
 
-  console.log(`Purchasing player ${playerName} (id=${playerId}) for ${priceSOL} SOL`)
-  const result = await provider.signAndSendTransaction(transaction)
-  const signature = typeof result === 'string' ? result : result.signature
-  console.log('Purchase tx sent:', signature)
-
-  try {
-    await withTimeout(
-      connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
-      30000,
-      'confirmPurchase',
-    )
-  } catch {
-    console.warn('Confirm timeout — purchase may still land')
-  }
-
+  console.log(`Purchasing ${playerName} (id=${playerId}) for ${priceSOL} SOL`)
+  const signature = await signAndConfirm(provider, transaction, blockhash, lastValidBlockHeight)
   return { signature, txUrl: solscanTransactionUrl(signature) }
 }
 

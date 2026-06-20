@@ -94,8 +94,9 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
   async function disconnect() {
     setOpen(false)
     const provider = phantomProvider()
+    // Only call disconnect — never delete window.phantom.solana, that breaks the
+    // provider object for the rest of the page session.
     try { await provider?.disconnect() } catch { /* ignore */ }
-    if (window.phantom?.solana) delete window.phantom.solana
     onDisconnected()
   }
 
