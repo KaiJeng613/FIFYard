@@ -53,33 +53,42 @@ export function solscanProgramUrl() {
   return `https://solscan.io/account/${programId.toBase58()}?cluster=devnet`
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
+    ),
+  ]) as T
+}
+
+async function switchRpc(): void {
+  if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
+    currentRpcIndex++
+    connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
+    console.log(`Switched to RPC endpoint #${currentRpcIndex}: ${RPC_ENDPOINTS[currentRpcIndex]}`)
+  }
+}
+
 export async function fetchEpoch(): Promise<number | null> {
   try {
-    const info = await connection.getEpochInfo()
+    const info = await withTimeout(connection.getEpochInfo(), 5000, 'fetchEpoch')
     return info.epoch
   } catch (err) {
     console.error('Epoch fetch error:', err)
-    if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
-      currentRpcIndex++
-      connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
-      return fetchEpoch()
-    }
-    return null
+    await switchRpc()
+    return fetchEpoch()
   }
 }
 
 export async function fetchBalance(address: string): Promise<number> {
   try {
-    const lamports = await connection.getBalance(new PublicKey(address))
+    const lamports = await withTimeout(connection.getBalance(new PublicKey(address)), 5000, 'fetchBalance')
     return lamports
   } catch (err) {
     console.error('Balance fetch error:', err)
-    if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
-      currentRpcIndex++
-      connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
-      return fetchBalance(address)
-    }
-    return 0
+    await switchRpc()
+    return fetchBalance(address)
   }
 }
 
@@ -88,32 +97,18 @@ export function isPhantomOnDevnet(): boolean {
   return provider?.network === 'devnet' || !provider?.network
 }
 
-async function retryRpc<T>(fn: () => Promise<T>, maxRetries = 3, delay = 500): Promise<T> {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn()
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`RPC error (attempt ${i + 1}):`, msg)
-      if (msg.includes('429') || msg.includes('rate limit')) {
-        if (currentRpcIndex < RPC_ENDPOINTS.length - 1) {
-          currentRpcIndex++
-          connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], 'confirmed')
-        }
-        await new Promise((r) => setTimeout(r, delay * Math.pow(2, i)))
-        continue
-      }
-      throw err
-    }
-  }
-  throw new Error('Max retries exceeded')
-}
-
 export async function fetchPublishedTeams(walletAddress: string): Promise<OnChainTeam[]> {
   const pubKey = new PublicKey(walletAddress)
   console.log('Fetching teams for:', pubKey.toBase58())
 
-  const sigs = await retryRpc(() => connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }))
+  let sigs: { signature: string; blockTime: number | null }[]
+  try {
+    sigs = await withTimeout(connection.getConfirmedSignaturesForAddress2(pubKey, { limit: 100 }), 5000, 'fetchSignatures')
+  } catch (err) {
+    console.error('Signature fetch error:', err)
+    await switchRpc()
+    return fetchPublishedTeams(walletAddress)
+  }
   console.log('Found signatures:', sigs.length)
 
   const teams: OnChainTeam[] = []
@@ -121,7 +116,7 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
   for (const sigInfo of sigs) {
     const sig = sigInfo.signature
     try {
-      const tx = await retryRpc(() => connection.getTransaction(sig))
+      const tx = await withTimeout(connection.getTransaction(sig), 3000, `getTransaction(${sig})`)
       if (!tx || !tx.transaction) continue
 
       const msg = tx.transaction.message
@@ -137,11 +132,9 @@ export async function fetchPublishedTeams(walletAddress: string): Promise<OnChai
 
       console.log(`Transaction ${sig}: ${compiledIx.length} instructions`)
 
-      // Find Memo instruction
       const memoIx = compiledIx.find((ix) => accountKeys[ix.programIdIndex]?.equals(memoProgramId))
       if (!memoIx?.data) continue
 
-      // Decode base64 memo data
       const decoded = Buffer.from(memoIx.data, 'base64').toString('utf8')
       console.log('Memo data:', decoded)
 
@@ -187,7 +180,16 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
     data: Buffer.from(message, 'utf8'),
   }))
 
-  const { blockhash, lastValidBlockHeight } = await retryRpc(() => connection.getLatestBlockhash('confirmed'))
+  let blockhashResult
+  try {
+    blockhashResult = await withTimeout(connection.getLatestBlockhash('confirmed'), 5000, 'getLatestBlockhash')
+  } catch (err) {
+    console.error('Blockhash fetch error:', err)
+    await switchRpc()
+    return publishTeamSnapshot(ownerAddress, snapshot)
+  }
+  const { blockhash, lastValidBlockHeight } = blockhashResult
+
   transaction.feePayer = owner
   transaction.recentBlockhash = blockhash
 
@@ -196,7 +198,11 @@ export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSn
   const signature = typeof result === 'string' ? result : result.signature
   console.log('Transaction sent:', signature)
 
-  await retryRpc(() => connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'))
+  try {
+    await withTimeout(connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'), 30000, 'confirmTransaction')
+  } catch (err) {
+    console.error('Confirm error (checking status anyway):', err)
+  }
   console.log('Transaction confirmed')
   return signature
 }

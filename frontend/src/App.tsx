@@ -6,74 +6,103 @@ import { formations, formationCounts, isValidLineup, predictMatch, opponents, ty
 import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
 import { players, type Player, type Position } from './players'
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 type Page = 'squad' | 'predictions'
 
 const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
-// ── Formation pitch slot layout ───────────────────────────────────────────────
-// Each formation maps player index → { row, col } in a 4-col × 5-row grid
-// Row 5 = GK (bottom), Row 1 = attackers (top)
 type SlotPos = { row: number; col: number; colSpan?: number }
 
 const formationSlots: Record<Formation, SlotPos[]> = {
-  // 4-3-3: GK, 4 DEF, 3 MID, 3 FWD  — indices follow selection order [GK,D,D,D,D,M,M,M,F,F,F]
   '4-3-3': [
-    { row: 5, col: 2, colSpan: 2 },           // GK
-    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 }, // DEF
-    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 4 },                      // MID
-    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },                      // FWD (L,C,R → approx)
+    { row: 5, col: 2, colSpan: 2 },
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 },
+    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 4 },
+    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },
   ],
-  // 4-4-2: GK, 4 DEF, 4 MID, 2 FWD
   '4-4-2': [
     { row: 5, col: 2, colSpan: 2 },
     { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 },
     { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 }, { row: 3, col: 4 },
     { row: 2, col: 2 }, { row: 2, col: 3 },
   ],
-  // 3-5-2: GK, 3 DEF, 5 MID, 2 FWD
   '3-5-2': [
     { row: 5, col: 2, colSpan: 2 },
-    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 4 },                      // 3 DEF
-    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 }, { row: 3, col: 4 }, { row: 3, col: 5 }, // 5 MID (5 cols)
-    { row: 2, col: 2 }, { row: 2, col: 3 },                                           // 2 FWD
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 4 },
+    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 }, { row: 3, col: 4 }, { row: 3, col: 5 },
+    { row: 2, col: 2 }, { row: 2, col: 3 },
   ],
-  // 4-2-3-1: GK, 4 DEF, 2 DM, 3 AM, 1 ST
   '4-2-3-1': [
     { row: 5, col: 2, colSpan: 2 },
     { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 },
-    { row: 3, col: 2 }, { row: 3, col: 3 },                                           // 2 DM
-    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },                      // 3 AM
-    { row: 1, col: 2, colSpan: 2 },                                                   // 1 ST
+    { row: 3, col: 2 }, { row: 3, col: 3 },
+    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },
+    { row: 1, col: 2, colSpan: 2 },
   ],
 }
 
 export function App() {
-  // ── Page routing ─────────────────────────────────────────────────────────
   const [page, setPage] = useState<Page>('squad')
 
-  // ── Squad state ───────────────────────────────────────────────────────────
   const [formation, setFormation] = useState<Formation>('4-3-3')
   const [filter, setFilter] = useState<(typeof filters)[number]>('ALL')
   const [selected, setSelected] = useState<number[]>([13, 8, 9, 10, 11, 4, 5, 6, 0, 1, 2])
   const [focused, setFocused] = useState<Player>(players[0])
   const [opponentCode, setOpponentCode] = useState('ARG')
 
-  // ── Wallet state ──────────────────────────────────────────────────────────
   const [wallet, setWallet] = useState<string | null>(null)
 
-  // ── Epoch state ───────────────────────────────────────────────────────────
   const [epoch, setEpoch] = useState<number | null>(null)
 
-  // ── Published teams persistent storage ───────────────────────────────────────
   const [publishedTeams, setPublishedTeams] = useState<PublishedTeam[]>([])
+
+  const [teamName, setTeamName] = useState('My Team')
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const [lastTxUrl, setLastTxUrl] = useState<string | null>(null)
+
+  // ── Formation auto-adjustment ───────────────────────────────────────────────────
+  const prevFormation = useRef<Formation | null>(null)
+  useEffect(() => {
+    if (prevFormation.current && prevFormation.current !== formation && selected.length === 11) {
+      const oldCounts = formationCounts[prevFormation.current]
+      const newCounts = formationCounts[formation]
+      const changes: Array<{ pos: Position; need: number }> = []
+
+      ;(Object.keys(oldCounts) as Position[]).forEach((pos) => {
+        const need = oldCounts[pos] - newCounts[pos]
+        if (need !== 0) changes.push({ pos, need })
+      })
+
+      setSelected((cur) => {
+        let next = [...cur]
+        changes.forEach(({ pos, need }) => {
+          if (need > 0) {
+            const toRemove = next
+              .map((id) => players.find((p) => p.id === id))
+              .filter((p): p is Player => p?.position === pos)
+              .sort((a, b) => a.overall - b.overall)
+              .slice(0, need)
+            next = next.filter((id) => !toRemove.some(p => p.id === id))
+          } else if (need < 0) {
+            const toAdd = Math.abs(need)
+            const best = players
+              .filter((p) => p.position === pos && !next.includes(p.id))
+              .sort((a, b) => b.overall - a.overall)
+              .slice(0, toAdd)
+            next = [...next, ...best.map(p => p.id)]
+          }
+        })
+        return next
+      })
+      setLastTxUrl(null)
+    }
+    prevFormation.current = formation
+  }, [formation])
 
   // Load from localStorage and auto-connect wallet on mount
   useEffect(() => {
     fetchEpoch().then(setEpoch)
 
-    // Load published teams from localStorage
     try {
       const saved = localStorage.getItem('fifyard-teams')
       if (saved) {
@@ -82,7 +111,6 @@ export function App() {
       }
     } catch { /* ignore */ }
 
-    // Auto-connect if Phantom already has an active session
     const provider = window.phantom?.solana
     if (provider?.isPhantom && provider.publicKey) {
       setWallet(provider.publicKey.toString())
@@ -94,19 +122,12 @@ export function App() {
     if (wallet) {
       fetchPublishedTeams(wallet).then((onChainTeams) => {
         setPublishedTeams(() => {
-          // Merge on-chain teams with local storage, prefer on-chain
           try { localStorage.setItem('fifyard-teams', JSON.stringify(onChainTeams)) } catch { /* ignore */ }
           return onChainTeams
         })
       }).catch(console.error)
     }
   }, [wallet])
-
-  // ── Publish state ─────────────────────────────────────────────────────────
-  const [teamName, setTeamName] = useState('My Team')
-  const [publishing, setPublishing] = useState(false)
-  const [publishError, setPublishError] = useState('')
-  const [lastTxUrl, setLastTxUrl] = useState<string | null>(null)
 
   // ── Derived squad values ──────────────────────────────────────────────────
   const selectedPlayers = useMemo(
@@ -182,11 +203,9 @@ export function App() {
 
   // ── Pitch slot renderer ───────────────────────────────────────────────────
   const slots = formationSlots[formation]
-  // Determine grid columns needed for this formation
   const maxCol = Math.max(...slots.map((s) => (s.col ?? 1) + (s.colSpan ?? 1) - 1))
   const pitchCols = Math.max(4, maxCol)
 
-  // ── Sidebar ref for close-on-outside ─────────────────────────────────────
   const historyOpenRef = useRef(false)
 
   function handleShowHistory() {
@@ -212,7 +231,6 @@ export function App() {
         </header>
 
         <main>
-          {/* ── Squad Builder ── */}
           {page === 'squad' && (
             <section className="workspace" id="squad">
               <div className="section-heading">
@@ -227,7 +245,6 @@ export function App() {
               </div>
 
               <div className="builder-grid">
-                {/* Player list panel */}
                 <aside className="player-panel">
                   <div className="filters">
                     {filters.map((item) => (
@@ -259,7 +276,6 @@ export function App() {
                   </div>
                 </aside>
 
-                {/* Pitch panel */}
                 <div className="pitch-panel">
                   <div className="formation-toolbar">
                     <span>FORMATION</span>
@@ -311,7 +327,6 @@ export function App() {
                     </div>
                   </div>
 
-                  {/* Squad summary bar */}
                   <div className="squad-summary">
                     <div><span>SQUAD RATING</span><strong>{average || '—'}</strong></div>
                     <div><span>FORMATION</span><strong>{formation}</strong></div>
@@ -336,7 +351,6 @@ export function App() {
                         placeholder="My Team"
                       />
                     </div>
-                    {/* Validation display */}
                     {!fullLineupValid && selected.length > 0 && (
                       <div className="lineup-validation">
                         Need: GK {expected.GK}, DEF {expected.DEF}, MID {expected.MID}, FWD {expected.FWD}
@@ -369,7 +383,6 @@ export function App() {
                   )}
                 </div>
 
-                {/* Stat panel */}
                 <aside className="stat-panel">
                   <div className="card-kicker">PLAYER INTELLIGENCE</div>
                   <div className="featured-rating">
@@ -399,7 +412,6 @@ export function App() {
             </section>
           )}
 
-          {/* ── Predictions page ── */}
           {page === 'predictions' && (
             <div className="workspace">
               <PredictionsPage publishedTeams={publishedTeams} />
