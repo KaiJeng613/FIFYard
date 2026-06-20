@@ -63,17 +63,17 @@ main { overflow: hidden; }
 .player-panel, .stat-panel { background: var(--panel); }
 .player-panel { border-right: 1px solid var(--line); overflow: hidden; }
 .filters { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); padding: 12px; gap: 4px; }
-.filters button, .formation-toolbar button { border: 0; background: transparent; color: #64776d; font: 500 9px 'DM Mono'; padding: 8px 3px; cursor: pointer; }
+.filters button, .formation-toolbar button { border: 0; background: transparent; color: #64776d; font: 600 11px 'DM Mono'; padding: 8px 5px; cursor: pointer; }
 .filters button.selected, .formation-toolbar button.selected { background: var(--lime); color: #07110d; }
 .player-list { max-height: 625px; overflow: auto; }
-.player-row { width: 100%; display: grid; grid-template-columns: 38px 1fr 35px 22px; align-items: center; gap: 8px; padding: 13px 12px; text-align: left; border: 0; border-bottom: 1px solid #1b2c23; background: transparent; cursor: pointer; }
+.player-row { width: 100%; display: grid; grid-template-columns: 42px 1fr 38px 22px; align-items: center; gap: 8px; padding: 14px 12px; text-align: left; border: 0; border-bottom: 1px solid #1b2c23; background: transparent; cursor: pointer; }
 .player-row:hover, .player-row.picked { background: #14251b; }
 .player-row.picked { box-shadow: inset 2px 0 var(--lime); }
-.rating { font: 700 19px 'Barlow Condensed'; color: var(--lime); }
+.rating { font: 700 22px 'Barlow Condensed'; color: var(--lime); }
 .player-identity { display: flex; flex-direction: column; min-width: 0; }
-.player-identity strong { font: 700 13px 'Barlow Condensed'; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.player-identity small { margin-top: 3px; color: #61746a; font: 400 8px 'DM Mono'; }
-.position { font: 500 8px 'DM Mono'; text-align: center; padding: 4px 2px; background: #1f3529; color: #a8beb1; }
+.player-identity strong { font: 700 15px 'Barlow Condensed'; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-identity small { margin-top: 3px; color: #61746a; font: 400 11px 'DM Mono'; }
+.position { font: 600 10px 'DM Mono'; text-align: center; padding: 4px 3px; background: #1f3529; color: #a8beb1; }
 .position.fwd { color: #f0b26c; }.position.mid { color: #9fd9cf; }.position.gk { color: #d4a5e8; }
 .pick-icon { color: #61746a; }
 .picked .pick-icon { color: var(--lime); }
@@ -97,18 +97,18 @@ main { overflow: hidden; }
 .mini-card small { font: 500 9px 'DM Mono'; color: #779083; margin-top: 3px; }
 
 /* ── Squad summary bar ── */
-.squad-summary { min-height: 72px; display: flex; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); gap: 20px; flex-wrap: wrap; }
-.squad-summary div { display: flex; flex-direction: column; gap: 3px; }
-.squad-summary span { font: 500 8px 'DM Mono'; color: #607469; }
-.squad-summary strong { font: 700 20px 'Barlow Condensed'; }
-.opponent-select select { margin-top: 5px; border: 1px solid #2a4032; background: #091410; color: #eef7f0; padding: 5px 8px; font: 500 9px 'DM Mono'; border-radius: 4px; outline: 0; }
-.team-name-input input { display: block; margin-top: 5px; border: 1px solid #2a4032; background: #091410; color: #eef7f0; padding: 5px 8px; font: 500 9px 'DM Mono'; border-radius: 4px; outline: 0; width: 130px; }
+.squad-summary { min-height: 80px; display: flex; align-items: center; padding: 14px 18px; border-top: 1px solid var(--line); gap: 22px; flex-wrap: wrap; }
+.squad-summary div { display: flex; flex-direction: column; gap: 4px; }
+.squad-summary span { font: 600 11px 'DM Mono'; color: #607469; }
+.squad-summary strong { font: 700 24px 'Barlow Condensed'; }
+.opponent-select select { margin-top: 5px; border: 1px solid #2a4032; background: #091410; color: #eef7f0; padding: 6px 10px; font: 500 11px 'DM Mono'; border-radius: 4px; outline: 0; }
+.team-name-input input { display: block; margin-top: 5px; border: 1px solid #2a4032; background: #091410; color: #eef7f0; padding: 6px 10px; font: 500 11px 'DM Mono'; border-radius: 4px; outline: 0; width: 140px; }
 .team-name-input input:focus { border-color: var(--lime); }
-.submit-xi-btn { margin-left: auto; border: 0; background: var(--lime); color: #08110d; padding: 13px 18px; font: 700 10px 'DM Mono'; text-transform: uppercase; cursor: pointer; border-radius: 3px; white-space: nowrap; }
+.submit-xi-btn { margin-left: auto; border: 0; background: var(--lime); color: #08110d; padding: 13px 18px; font: 700 11px 'DM Mono'; text-transform: uppercase; cursor: pointer; border-radius: 3px; white-space: nowrap; }
 .submit-xi-btn:disabled { filter: grayscale(1); opacity: .4; cursor: not-allowed; }
-.wallet-error { color: #ff9f89; font: 10px 'DM Mono'; margin: 0 18px 10px; }
-.publish-success { color: #7bd68e; font: 500 10px 'DM Mono'; margin: 0 18px 10px; }
-.lineup-validation { grid-column: 1 / -1; color: #ff9f89; font: 500 9px 'DM Mono'; margin-top: 8px; }
+.wallet-error { color: #ff9f89; font: 11px 'DM Mono'; margin: 0 18px 10px; }
+.publish-success { color: #7bd68e; font: 500 11px 'DM Mono'; margin: 0 18px 10px; }
+.lineup-validation { grid-column: 1 / -1; color: #ff9f89; font: 500 11px 'DM Mono'; margin-top: 8px; }
 
 /* ── Stat panel ── */
 .stat-panel { border-left: 1px solid var(--line); padding: 22px; position: relative; }
