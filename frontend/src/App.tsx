@@ -4,7 +4,7 @@ import { WalletButton } from './components/WalletButton'
 import { PredictionsPage, type PublishedTeam } from './components/PredictionsPage'
 import { PlayersPage } from './components/PlayersPage'
 import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
-import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl, fetchShortlist, publishShortlist } from './lib/solana'
+import { fetchEpoch, fetchPublishedTeams, publishTeamSnapshot, solscanTransactionUrl, fetchShortlist, publishShortlist, invalidateTeamsCache } from './lib/solana'
 import { players, type Player, type Position } from './players'
 
 type Page = 'squad' | 'players' | 'predictions'
@@ -233,6 +233,8 @@ export function App() {
         try { localStorage.setItem('fifyard-teams', JSON.stringify(updated)) } catch { /* ignore */ }
         return updated
       })
+      // Invalidate cache so the Predictions page re-fetches fresh data
+      invalidateTeamsCache(wallet)
     } catch (err: unknown) {
       console.error('Publish error:', err)
       setPublishError(String(err))
