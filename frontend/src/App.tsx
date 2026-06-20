@@ -134,8 +134,9 @@ export function App() {
         txUrl,
       }
       setPublishedTeams((prev) => [...prev, newTeam])
-    } catch (err) {
-      setPublishError(err instanceof Error ? err.message : 'Transaction failed.')
+    } catch (err: unknown) {
+      console.error('Publish error:', err)
+      setPublishError(String(err))
     } finally {
       setPublishing(false)
     }
