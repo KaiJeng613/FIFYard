@@ -6,11 +6,12 @@ export const programId = new PublicKey('6Ew7FSCCyS5EG5gkJ8TTq7Hbjy7tpB5tBVhRPmKn
 const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 
 export type TeamSnapshot = {
-  country: string
+  name: string
   formation: Formation
   playerIds: number[]
   opponent: string
   winRate: number
+  squadRating: number
 }
 
 export function phantomProvider() {
@@ -26,7 +27,17 @@ export function solscanProgramUrl() {
   return `https://solscan.io/account/${programId.toBase58()}?cluster=devnet`
 }
 
-export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot) {
+/** Fetch the current Solana devnet epoch number. Returns null on failure. */
+export async function fetchEpoch(): Promise<number | null> {
+  try {
+    const info = await connection.getEpochInfo()
+    return info.epoch
+  } catch {
+    return null
+  }
+}
+
+export async function publishTeamSnapshot(ownerAddress: string, snapshot: TeamSnapshot): Promise<string> {
   const provider = phantomProvider()
   if (!provider) throw new Error('Phantom is not installed')
   const owner = new PublicKey(ownerAddress)

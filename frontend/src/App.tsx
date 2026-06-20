@@ -1,175 +1,363 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { WalletButton } from './components/WalletButton'
+import { PredictionsPage, type PublishedTeam } from './components/PredictionsPage'
 import { formations, formationCounts, isValidLineup, predictMatch, opponents, type Formation } from './lib/prediction'
+import { fetchEpoch, publishTeamSnapshot, solscanTransactionUrl } from './lib/solana'
 import { players, type Player, type Position } from './players'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Page = 'squad' | 'predictions'
 
 const filters: Array<'ALL' | Position> = ['ALL', 'GK', 'DEF', 'MID', 'FWD']
 
+// ── Formation pitch slot layout ───────────────────────────────────────────────
+// Each formation maps player index → { row, col } in a 4-col × 5-row grid
+// Row 5 = GK (bottom), Row 1 = attackers (top)
+type SlotPos = { row: number; col: number; colSpan?: number }
+
+const formationSlots: Record<Formation, SlotPos[]> = {
+  // 4-3-3: GK, 4 DEF, 3 MID, 3 FWD  — indices follow selection order [GK,D,D,D,D,M,M,M,F,F,F]
+  '4-3-3': [
+    { row: 5, col: 2, colSpan: 2 },           // GK
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 }, // DEF
+    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 4 },                      // MID
+    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },                      // FWD (L,C,R → approx)
+  ],
+  // 4-4-2: GK, 4 DEF, 4 MID, 2 FWD
+  '4-4-2': [
+    { row: 5, col: 2, colSpan: 2 },
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 },
+    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 }, { row: 3, col: 4 },
+    { row: 2, col: 2 }, { row: 2, col: 3 },
+  ],
+  // 3-5-2: GK, 3 DEF, 5 MID, 2 FWD
+  '3-5-2': [
+    { row: 5, col: 2, colSpan: 2 },
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 4 },                      // 3 DEF
+    { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 }, { row: 3, col: 4 }, { row: 3, col: 5 }, // 5 MID (5 cols)
+    { row: 2, col: 2 }, { row: 2, col: 3 },                                           // 2 FWD
+  ],
+  // 4-2-3-1: GK, 4 DEF, 2 DM, 3 AM, 1 ST
+  '4-2-3-1': [
+    { row: 5, col: 2, colSpan: 2 },
+    { row: 4, col: 1 }, { row: 4, col: 2 }, { row: 4, col: 3 }, { row: 4, col: 4 },
+    { row: 3, col: 2 }, { row: 3, col: 3 },                                           // 2 DM
+    { row: 2, col: 1 }, { row: 2, col: 2 }, { row: 2, col: 4 },                      // 3 AM
+    { row: 1, col: 2, colSpan: 2 },                                                   // 1 ST
+  ],
+}
+
 export function App() {
+  // ── Page routing ─────────────────────────────────────────────────────────
+  const [page, setPage] = useState<Page>('squad')
+
+  // ── Squad state ───────────────────────────────────────────────────────────
   const [formation, setFormation] = useState<Formation>('4-3-3')
   const [filter, setFilter] = useState<(typeof filters)[number]>('ALL')
   const [selected, setSelected] = useState<number[]>([13, 8, 9, 10, 11, 4, 5, 6, 0, 1, 2])
   const [focused, setFocused] = useState<Player>(players[0])
-  const [wallet, setWallet] = useState<string | null>(null)
   const [opponentCode, setOpponentCode] = useState('ARG')
 
+  // ── Wallet state ──────────────────────────────────────────────────────────
+  const [wallet, setWallet] = useState<string | null>(null)
+
+  // ── Epoch state ───────────────────────────────────────────────────────────
+  const [epoch, setEpoch] = useState<number | null>(null)
+  useEffect(() => {
+    fetchEpoch().then(setEpoch)
+  }, [])
+
+  // ── Publish state ─────────────────────────────────────────────────────────
+  const [teamName, setTeamName] = useState('My Team')
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const [publishedTeams, setPublishedTeams] = useState<PublishedTeam[]>([])
+  const [lastTxUrl, setLastTxUrl] = useState<string | null>(null)
+
+  // ── Derived squad values ──────────────────────────────────────────────────
   const selectedPlayers = useMemo(
-    () => selected.map((id) => players.find((player) => player.id === id)).filter((player): player is Player => Boolean(player)),
+    () => selected.map((id) => players.find((p) => p.id === id)).filter((p): p is Player => Boolean(p)),
     [selected],
   )
-
-  const opponent = opponents.find((item) => item.code === opponentCode) ?? opponents[0]
+  const filteredPlayers = filter === 'ALL' ? players : players.filter((p) => p.position === filter)
+  const opponent = opponents.find((o) => o.code === opponentCode) ?? opponents[0]
   const lineupValid = isValidLineup(selectedPlayers, formation)
   const prediction = predictMatch(selectedPlayers, opponent.rating, lineupValid)
-
   const average = selectedPlayers.length
-    ? Math.round(selectedPlayers.reduce((sum, player) => sum + player.overall, 0) / selectedPlayers.length)
+    ? Math.round(selectedPlayers.reduce((s, p) => s + p.overall, 0) / selectedPlayers.length)
     : 0
-  const filteredPlayers = filter === 'ALL' ? players : players.filter((player) => player.position === filter)
   const positionCounts = selectedPlayers.reduce<Record<Position, number>>(
-    (counts, player) => ({ ...counts, [player.position]: counts[player.position] + 1 }),
+    (c, p) => ({ ...c, [p.position]: c[p.position] + 1 }),
     { GK: 0, DEF: 0, MID: 0, FWD: 0 },
   )
   const expected = formationCounts[formation]
-  const fullLineupValid = selected.length === 11 && filters.slice(1).every(
-    (position) => positionCounts[position as Position] === expected[position as Position],
-  )
+  const fullLineupValid = selected.length === 11 &&
+    filters.slice(1).every((pos) => positionCounts[pos as Position] === expected[pos as Position])
 
+  // ── Player actions ────────────────────────────────────────────────────────
   function togglePlayer(player: Player) {
     setFocused(player)
-    setSelected((current) => {
-      if (current.includes(player.id)) return current.filter((id) => id !== player.id)
-      if (current.length >= 11) return current
-      return [...current, player.id]
+    setSelected((cur) => {
+      if (cur.includes(player.id)) return cur.filter((id) => id !== player.id)
+      if (cur.length >= 11) return cur
+      return [...cur, player.id]
     })
+    setLastTxUrl(null)
+  }
+
+  // ── Publish action ────────────────────────────────────────────────────────
+  async function submitXI() {
+    if (!wallet || !fullLineupValid) return
+    setPublishing(true)
+    setPublishError('')
+    setLastTxUrl(null)
+    try {
+      const signature = await publishTeamSnapshot(wallet, {
+        name: teamName,
+        formation,
+        playerIds: selected,
+        opponent: opponent.code,
+        winRate: prediction.win,
+        squadRating: average,
+      })
+      const txUrl = solscanTransactionUrl(signature)
+      setLastTxUrl(txUrl)
+      const newTeam: PublishedTeam = {
+        id: signature,
+        name: teamName,
+        formation,
+        playerIds: [...selected],
+        squadRating: average,
+        publishedAt: Date.now(),
+        txUrl,
+      }
+      setPublishedTeams((prev) => [...prev, newTeam])
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Transaction failed.')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  // ── Pitch slot renderer ───────────────────────────────────────────────────
+  const slots = formationSlots[formation]
+  // Determine grid columns needed for this formation
+  const maxCol = Math.max(...slots.map((s) => (s.col ?? 1) + (s.colSpan ?? 1) - 1))
+  const pitchCols = Math.max(4, maxCol)
+
+  // ── Sidebar ref for close-on-outside ─────────────────────────────────────
+  const historyOpenRef = useRef(false)
+
+  function handleShowHistory() {
+    historyOpenRef.current = true
+    setPage('predictions')
   }
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar activePage={page} onNavigate={setPage} />
       <div className="app-main">
         <header className="topbar">
-          <div><span className="live-dot" /> LIVE PLAYER ORACLE <b>·</b> EPOCH 491</div>
-          <WalletButton wallet={wallet} onConnected={setWallet} />
+          <div>
+            <span className="live-dot" /> LIVE PLAYER ORACLE{' '}
+            <b>·</b> EPOCH {epoch !== null ? epoch : '…'}
+          </div>
+          <WalletButton
+            wallet={wallet}
+            onConnected={setWallet}
+            onDisconnected={() => setWallet(null)}
+            onShowHistory={handleShowHistory}
+          />
         </header>
 
-        <main id="top">
-          <section className="workspace" id="squad">
-            <div className="section-heading">
-              <div>
-                <span>01 / SQUAD BUILDER</span>
-                <h2>Assemble your starting XI</h2>
-              </div>
-              <div className="selection-count">
-                <strong>{selected.length}</strong>
-                <span>/ 11 SELECTED</span>
-              </div>
-            </div>
-
-            <div className="builder-grid">
-              <aside className="player-panel">
-                <div className="filters">
-                  {filters.map((item) => (
-                    <button className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)} key={item}>
-                      {item}
-                    </button>
-                  ))}
+        <main>
+          {/* ── Squad Builder ── */}
+          {page === 'squad' && (
+            <section className="workspace" id="squad">
+              <div className="section-heading">
+                <div>
+                  <span>01 / SQUAD BUILDER</span>
+                  <h2>Assemble your starting XI</h2>
                 </div>
-                <div className="player-list">
-                  {filteredPlayers.map((player) => (
-                    <button
-                      className={`player-row ${selected.includes(player.id) ? 'picked' : ''}`}
-                      onClick={() => togglePlayer(player)}
-                      key={player.id}
-                    >
-                      <span className="rating">{player.overall}</span>
-                      <span className="player-identity">
-                        <strong>{player.name}</strong>
-                        <small>{player.club} · {player.country}</small>
-                      </span>
-                      <span className={`position ${player.position.toLowerCase()}`}>{player.position}</span>
-                      <span className="pick-icon">{selected.includes(player.id) ? '✓' : '+'}</span>
-                    </button>
-                  ))}
+                <div className="selection-count">
+                  <strong>{selected.length}</strong>
+                  <span>/ 11 SELECTED</span>
                 </div>
-              </aside>
+              </div>
 
-              <div className="pitch-panel">
-                <div className="formation-toolbar">
-                  <span>FORMATION</span>
-                  <div>
-                    {formations.map((item) => (
-                      <button className={formation === item ? 'selected' : ''} onClick={() => setFormation(item)} key={item}>
+              <div className="builder-grid">
+                {/* Player list panel */}
+                <aside className="player-panel">
+                  <div className="filters">
+                    {filters.map((item) => (
+                      <button
+                        className={filter === item ? 'selected' : ''}
+                        onClick={() => setFilter(item)}
+                        key={item}
+                      >
                         {item}
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="pitch">
-                  <div className="center-circle" />
-                  <div className="penalty top" />
-                  <div className="penalty bottom" />
-                  <div className="lineup">
-                    {selectedPlayers.map((player, index) => (
-                      <button className={`mini-card slot-${index}`} onClick={() => setFocused(player)} key={player.id}>
-                        <span>{player.overall}</span>
-                        <strong>{player.shortName}</strong>
-                        <small>{player.position}</small>
+                  <div className="player-list">
+                    {filteredPlayers.map((player) => (
+                      <button
+                        className={`player-row ${selected.includes(player.id) ? 'picked' : ''}`}
+                        onClick={() => togglePlayer(player)}
+                        key={player.id}
+                      >
+                        <span className="rating">{player.overall}</span>
+                        <span className="player-identity">
+                          <strong>{player.name}</strong>
+                          <small>{player.club} · {player.country}</small>
+                        </span>
+                        <span className={`position ${player.position.toLowerCase()}`}>{player.position}</span>
+                        <span className="pick-icon">{selected.includes(player.id) ? '✓' : '+'}</span>
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="squad-summary">
-                  <div><span>SQUAD RATING</span><strong>{average}</strong></div>
-                  <div><span>FORMATION</span><strong>{formation}</strong></div>
-                  <div><span>WIN RATE</span><strong>{lineupValid ? `${prediction.win}%` : '—'}</strong></div>
-                  <div className="opponent-select">
-                    <span>VS OPPONENT</span>
-                    <select value={opponentCode} onChange={(e) => setOpponentCode(e.target.value)}>
-                      {opponents.map((item) => (
-                        <option value={item.code} key={item.code}>{item.country} ({item.rating})</option>
+                </aside>
+
+                {/* Pitch panel */}
+                <div className="pitch-panel">
+                  <div className="formation-toolbar">
+                    <span>FORMATION</span>
+                    <div>
+                      {formations.map((item) => (
+                        <button
+                          className={formation === item ? 'selected' : ''}
+                          onClick={() => setFormation(item)}
+                          key={item}
+                        >
+                          {item}
+                        </button>
                       ))}
-                    </select>
-                  </div>
-                  <button disabled={!wallet || !fullLineupValid}>
-                    {wallet ? (fullLineupValid ? 'Submit XI' : 'Complete a valid XI') : 'Connect wallet to continue'}
-                  </button>
-                </div>
-              </div>
-
-              <aside className="stat-panel">
-                <div className="card-kicker">PLAYER INTELLIGENCE</div>
-                <div className="featured-rating"><strong>{focused.overall}</strong><span>OVR</span></div>
-                <h3>{focused.name}</h3>
-                <p>{focused.position} · {focused.club} · {focused.country}</p>
-                <div className="stat-bars">
-                  {Object.entries(focused.stats).map(([label, value]) => (
-                    <div className="stat" key={label}>
-                      <span>{label}</span>
-                      <div><i style={{ width: `${value}%` }} /></div>
-                      <strong>{value}</strong>
                     </div>
-                  ))}
-                </div>
-                <div className="oracle-stamp">
-                  <i>✓</i>
-                  <span><strong>VERIFIED ON-CHAIN</strong>Stats oracle · Epoch 491</span>
-                </div>
-                <code>PLAYER PDA · 7xK2…mP9q</code>
-              </aside>
-            </div>
-          </section>
+                  </div>
 
-          <section className="protocol" id="protocol">
-            <span>02 / THE PROTOCOL</span>
-            <h2>Football data you can verify.</h2>
-            <div className="protocol-grid">
-              <article><b>01</b><h3>Collect</h3><p>Each player card is a unique Solana NFT tied to a canonical player account.</p></article>
-              <article><b>02</b><h3>Verify</h3><p>Versioned ratings are signed by the FIFYard statistics authority and timestamped on-chain.</p></article>
-              <article><b>03</b><h3>Compete</h3><p>Your eleven-player formation becomes a composable squad PDA for games and prediction leagues.</p></article>
+                  <div className="pitch">
+                    <div className="center-circle" />
+                    <div className="penalty top" />
+                    <div className="penalty bottom" />
+                    <div
+                      className="lineup"
+                      style={{
+                        gridTemplateColumns: `repeat(${pitchCols}, 1fr)`,
+                        gridTemplateRows: 'repeat(5, 1fr)',
+                      }}
+                    >
+                      {selectedPlayers.map((player, index) => {
+                        const slot = slots[index]
+                        if (!slot) return null
+                        return (
+                          <button
+                            className="mini-card"
+                            style={{
+                              gridColumn: slot.colSpan
+                                ? `${slot.col} / span ${slot.colSpan}`
+                                : slot.col,
+                              gridRow: slot.row,
+                            }}
+                            onClick={() => setFocused(player)}
+                            key={player.id}
+                          >
+                            <span>{player.overall}</span>
+                            <strong>{player.shortName}</strong>
+                            <small>{player.position}</small>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Squad summary bar */}
+                  <div className="squad-summary">
+                    <div><span>SQUAD RATING</span><strong>{average || '—'}</strong></div>
+                    <div><span>FORMATION</span><strong>{formation}</strong></div>
+                    <div>
+                      <span>WIN RATE</span>
+                      <strong>{fullLineupValid ? `${prediction.win}%` : '—'}</strong>
+                    </div>
+                    <div className="opponent-select">
+                      <span>VS OPPONENT</span>
+                      <select value={opponentCode} onChange={(e) => setOpponentCode(e.target.value)}>
+                        {opponents.map((o) => (
+                          <option value={o.code} key={o.code}>{o.country} ({o.rating})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="team-name-input">
+                      <span>TEAM NAME</span>
+                      <input
+                        value={teamName}
+                        onChange={(e) => setTeamName(e.target.value)}
+                        maxLength={32}
+                        placeholder="My Team"
+                      />
+                    </div>
+                    <button
+                      className="submit-xi-btn"
+                      disabled={!wallet || !fullLineupValid || publishing}
+                      onClick={submitXI}
+                    >
+                      {publishing
+                        ? 'Publishing…'
+                        : !wallet
+                        ? 'Connect wallet'
+                        : !fullLineupValid
+                        ? 'Complete a valid XI'
+                        : 'Submit XI'}
+                    </button>
+                  </div>
+
+                  {publishError && (
+                    <p className="wallet-error" role="alert">{publishError}</p>
+                  )}
+                  {lastTxUrl && (
+                    <p className="publish-success">
+                      Published! <a href={lastTxUrl} target="_blank" rel="noreferrer">View on Solscan ↗</a>
+                    </p>
+                  )}
+                </div>
+
+                {/* Stat panel */}
+                <aside className="stat-panel">
+                  <div className="card-kicker">PLAYER INTELLIGENCE</div>
+                  <div className="featured-rating">
+                    <strong>{focused.overall}</strong><span>OVR</span>
+                  </div>
+                  <h3>{focused.name}</h3>
+                  <p>{focused.position} · {focused.club} · {focused.country}</p>
+                  <div className="stat-bars">
+                    {Object.entries(focused.stats).map(([label, value]) => (
+                      <div className="stat" key={label}>
+                        <span>{label}</span>
+                        <div><i style={{ width: `${value}%` }} /></div>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="oracle-stamp">
+                    <i>✓</i>
+                    <span>
+                      <strong>VERIFIED ON-CHAIN</strong>
+                      Stats oracle · Epoch {epoch !== null ? epoch : '…'}
+                    </span>
+                  </div>
+                  <code>PLAYER PDA · 7xK2…mP9q</code>
+                </aside>
+              </div>
+            </section>
+          )}
+
+          {/* ── Predictions page ── */}
+          {page === 'predictions' && (
+            <div className="workspace">
+              <PredictionsPage publishedTeams={publishedTeams} />
             </div>
-          </section>
+          )}
         </main>
       </div>
     </div>
