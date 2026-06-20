@@ -10,27 +10,37 @@ interface WalletButtonProps {
   onShowHistory: () => void
 }
 
-// Dedicated fast endpoints just for balance — independent of the shared RPC connection
+// Same endpoints as solana.ts — all are genuine Solana devnet nodes
 const BALANCE_RPCS = [
   'https://api.devnet.solana.com',
-  'https://rpc.devnet.sonic.game',
+  'https://rpc.ankr.com/solana_devnet',
+  'https://solana-devnet.rpc.extrnode.com',
 ]
 
-async function fetchBalanceDirect(address: string): Promise<number> {
+async function fetchBalanceDirect(address: string): Promise<number | null> {
   const pubkey = new PublicKey(address)
   for (const endpoint of BALANCE_RPCS) {
     try {
-      const conn = new Connection(endpoint, 'confirmed')
-      const lamports = await Promise.race([
+      const conn = new Connection(endpoint, {
+        commitment: 'confirmed',
+        disableRetryOnRateLimit: true,
+      })
+      const lamports = await Promise.race<number>([
         conn.getBalance(pubkey),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000)),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
       ])
+      // A real wallet with SOL will return > 0. If we get 0 from a healthy
+      // endpoint that would be a valid balance, so return it. Only skip if
+      // the call outright threw (caught below).
+      console.log(`Balance from ${endpoint}: ${lamports} lamports`)
       return lamports
-    } catch {
-      // try next endpoint
+    } catch (err) {
+      console.warn(`Balance fetch failed on ${endpoint}:`, err)
+      // Try the next endpoint
     }
   }
-  return 0
+  // All endpoints failed — return null so the UI shows an error state
+  return null
 }
 
 function shortAddress(address: string) {
@@ -44,7 +54,7 @@ function formatSOL(lamports: number): string {
 export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistory }: WalletButtonProps) {
   const [error, setError]     = useState('')
   const [open, setOpen]       = useState(false)
-  const [balance, setBalance] = useState<number | null>(null)
+  const [balance, setBalance] = useState<number | null | undefined>(undefined)
   const [network, setNetwork] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -55,7 +65,7 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       return
     }
 
-    setBalance(null) // reset to show fresh load
+    setBalance(undefined) // undefined = still loading, null = failed
     fetchBalanceDirect(wallet).then(setBalance)
 
     const p = phantomProvider()
@@ -116,8 +126,11 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
       <button className="phantom-button connected" onClick={() => setOpen(v => !v)}>
         <WalletCards size={16} />
         {shortAddress(wallet)}
-        {balance !== null && (
+        {balance !== undefined && balance !== null && (
           <span className="phantom-balance">{formatSOL(balance)} SOL</span>
+        )}
+        {balance === undefined && (
+          <span className="phantom-balance phantom-balance-loading">···</span>
         )}
         <ChevronDown size={13} className={open ? 'chevron-up' : ''} />
       </button>
@@ -126,7 +139,9 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
         <div className="wallet-dropdown">
           <div className="wallet-dropdown-address">{wallet}</div>
           <div className="wallet-balance">
-            {balance !== null ? `${formatSOL(balance)} SOL` : 'Fetching balance…'}
+            {balance === undefined && 'Fetching balance…'}
+            {balance === null && 'Balance unavailable — RPC error'}
+            {balance !== undefined && balance !== null && `${formatSOL(balance)} SOL`}
           </div>
           {network && network !== 'devnet' && (
             <span className="wallet-network-warning">
