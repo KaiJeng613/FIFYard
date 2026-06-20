@@ -1,5 +1,4 @@
 import {
-  clusterApiUrl,
   Connection,
   PublicKey,
   SystemProgram,
@@ -10,18 +9,23 @@ import {
 import type { Formation } from './prediction'
 
 // ── RPC endpoints ─────────────────────────────────────────────────────────────
-// Only devnet endpoints that are actually reachable. clusterApiUrl('devnet')
-// resolves to api.devnet.solana.com — keep as last-resort fallback only.
+// Three genuinely different devnet endpoints. We rotate through them on any
+// failure so a 429 on one doesn't block the whole flow.
 const RPC_ENDPOINTS = [
   'https://api.devnet.solana.com',
-  clusterApiUrl('devnet'),  // same host, different codepath — fallback
+  'https://rpc.ankr.com/solana_devnet',
+  'https://solana-devnet.rpc.extrnode.com',
 ]
 
+function makeConnection(url: string) {
+  return new Connection(url, {
+    commitment: 'confirmed',
+    disableRetryOnRateLimit: true, // we manage retries ourselves
+  })
+}
+
 let currentRpcIndex = 0
-let connection = new Connection(RPC_ENDPOINTS[0], {
-  commitment: 'confirmed',
-  disableRetryOnRateLimit: true,   // we handle retries ourselves
-})
+let connection = makeConnection(RPC_ENDPOINTS[0])
 
 // ── In-memory cache ───────────────────────────────────────────────────────────
 // Avoids re-fetching the same on-chain data on every wallet reconnect.
@@ -101,46 +105,42 @@ function sleep(ms: number) {
 }
 
 /**
- * Rotate to the next RPC endpoint. Returns false when all endpoints are
- * exhausted (so callers know to stop retrying).
+ * Rotate to the next RPC endpoint, cycling round-robin.
  */
-function nextRpc(): boolean {
-  if (currentRpcIndex >= RPC_ENDPOINTS.length - 1) return false
-  currentRpcIndex++
-  connection = new Connection(RPC_ENDPOINTS[currentRpcIndex], {
-    commitment: 'confirmed',
-    disableRetryOnRateLimit: true,
-  })
-  console.log(`RPC switched to #${currentRpcIndex}: ${RPC_ENDPOINTS[currentRpcIndex]}`)
-  return true
+function nextRpc(): void {
+  currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length
+  connection = makeConnection(RPC_ENDPOINTS[currentRpcIndex])
+  console.log(`RPC rotated to #${currentRpcIndex}: ${RPC_ENDPOINTS[currentRpcIndex]}`)
 }
 
 /**
  * Execute an RPC call with:
  *  - a per-call timeout
- *  - exponential backoff on 429
- *  - automatic RPC rotation after repeated failure
+ *  - immediate RPC rotation on 429 or timeout
+ *  - short delay before retry to avoid thundering herd
+ *  - one attempt per endpoint, then one extra retry on the first endpoint
  */
-async function rpc<T>(fn: () => Promise<T>, timeoutMs = 8000, label = 'rpc'): Promise<T> {
-  const MAX_ATTEMPTS = 4
+async function rpc<T>(fn: () => Promise<T>, timeoutMs = 7000, label = 'rpc'): Promise<T> {
+  // Try each endpoint once, plus one final retry on whichever is current
+  const MAX_ATTEMPTS = RPC_ENDPOINTS.length + 1
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     try {
+      // Re-bind fn each attempt so it uses the current `connection`
       return await withTimeout(fn(), timeoutMs)
     } catch (err) {
       const msg = String(err)
       const is429 = msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('rate limit')
       const isTimeout = msg.includes('timeout')
-      console.warn(`${label} attempt ${i + 1} failed (${is429 ? '429' : isTimeout ? 'timeout' : 'error'}):`, msg)
+      console.warn(`${label} attempt ${i + 1}/${MAX_ATTEMPTS} on endpoint #${currentRpcIndex} failed (${is429 ? '429' : isTimeout ? 'timeout' : 'error'})`)
 
       if (i < MAX_ATTEMPTS - 1) {
-        // Exponential backoff: 500ms, 1s, 2s — then try next RPC
-        const backoff = 500 * Math.pow(2, i)
-        await sleep(backoff)
-        if (is429 || i >= 1) nextRpc()
+        nextRpc()
+        // Brief pause: 300ms between rotations — enough to avoid immediate re-429
+        await sleep(300)
       }
     }
   }
-  throw new Error(`${label}: all ${MAX_ATTEMPTS} attempts failed`)
+  throw new Error(`${label}: all ${MAX_ATTEMPTS} attempts across ${RPC_ENDPOINTS.length} endpoints failed. Devnet may be congested — try again in a moment.`)
 }
 
 // ── Epoch & balance ───────────────────────────────────────────────────────────
