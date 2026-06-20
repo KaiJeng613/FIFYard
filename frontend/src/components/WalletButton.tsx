@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ExternalLink, History, LogOut, Settings, WalletCards } from 'lucide-react'
-import { fetchBalance, phantomProvider, solscanProgramUrl } from '../lib/solana'
+import { AlertTriangle, ChevronDown, History, LogOut, Settings, WalletCards } from 'lucide-react'
+import { fetchBalance, phantomProvider } from '../lib/solana'
 
 interface WalletButtonProps {
   wallet: string | null
@@ -84,9 +84,6 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
   if (!wallet) {
     return (
       <div className="wallet-control" ref={ref}>
-        <a className="program-link" href={solscanProgramUrl()} target="_blank" rel="noreferrer">
-          Contract <ExternalLink size={13} />
-        </a>
         <button className="phantom-button" onClick={connect}>
           <WalletCards size={16} /> Connect
         </button>
@@ -97,9 +94,6 @@ export function WalletButton({ wallet, onConnected, onDisconnected, onShowHistor
 
   return (
     <div className="wallet-control" ref={ref}>
-      <a className="program-link" href={solscanProgramUrl()} target="_blank" rel="noreferrer">
-        Contract <ExternalLink size={13} />
-      </a>
       <button className="phantom-button connected" onClick={() => setOpen((v) => !v)}>
         <WalletCards size={16} />
         {shortAddress(wallet)}
